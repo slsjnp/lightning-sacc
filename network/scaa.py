@@ -19,6 +19,7 @@ class BasicBlock(nn.Module):
             # nn.InstanceNorm3d(num_features),
             norm_layer(num_features),
             nn.ReLU(inplace=True),
+
             conv(planes, planes, kernel_size=3, padding=1),
             # nn.InstanceNorm3d(num_features),
             norm_layer(num_features),
@@ -43,7 +44,9 @@ class Encoder3d(nn.Module):
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None):
         """
-        :param block: (required)
+        Encoder3d()
+        整张CT图作为输入
+        :param block: (required) BasicBlock(nn.Conv3d, 1, 24, num_features=2)
         :param layers: default [2, 2, 2, 2] (required)
         :param num_classes: (required)
         :param zero_init_residual:
@@ -121,30 +124,30 @@ class Encoder3d(nn.Module):
         return f3d2, f3d3, f3d4, f3d5, f3d6
 
 
-class ResBlock3d(nn.Module):
-    def __init__(self, in_ch, out_ch, mid_ch, num_features):
-        # self.conv3d = nn.Conv3d(in_ch, out_ch, ker)
-        # self.ReLU1 = nn.ReLU(inplace=True)
-        super(ResBlock3d, self).__init__()
-        self.conv3d = nn.Sequential(
-            nn.Conv3d(in_ch, mid_ch, kernel_size=3, padding=1),
-            nn.InstanceNorm3d(num_features),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(mid_ch, out_ch, kernel_size=3, padding=1),
-            nn.InstanceNorm3d(num_features),
-            # nn.ReLU(inplace=True),
-        )
-        self.ReLU = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        x1 = x,
-        x2 = self.conv3d(x)
-        x3 = x1 + x2
-        return self.ReLU(x3)
+# class ResBlock3d(nn.Module):
+#     def __init__(self, in_ch, out_ch, mid_ch, num_features):
+#         # self.conv3d = nn.Conv3d(in_ch, out_ch, ker)
+#         # self.ReLU1 = nn.ReLU(inplace=True)
+#         super(ResBlock3d, self).__init__()
+#         self.conv3d = nn.Sequential(
+#             nn.Conv3d(in_ch, mid_ch, kernel_size=3, padding=1),
+#             nn.InstanceNorm3d(num_features),
+#             nn.ReLU(inplace=True),
+#             nn.Conv3d(mid_ch, out_ch, kernel_size=3, padding=1),
+#             nn.InstanceNorm3d(num_features),
+#             # nn.ReLU(inplace=True),
+#         )
+#         self.ReLU = nn.ReLU(inplace=True)
+#
+#     def forward(self, x):
+#         x1 = x,
+#         x2 = self.conv3d(x)
+#         x3 = x1 + x2
+#         return self.ReLU(x3)
 
 
 class ConBlock2d(nn.Module):
-    def __init__(self, in_ch, out_ch, mid_ch, num_features):
+    def __init__(self, in_ch, mid_ch, out_ch, num_features):
         super(ConBlock2d, self).__init__()
         self.conv2d = nn.Sequential(
             nn.Conv2d(in_ch, mid_ch, kernel_size=3, padding=1),
@@ -163,28 +166,31 @@ class ConBlock2d(nn.Module):
 
 # 24 ，2
 class MSFA(nn.Module):
-    def __init__(self, in_ch, mid_ch, out_ch, shape=4, dropout=0.0):
+    def __init__(self, in_ch2, in_ch3, mid_ch, shape, dropout=0.0):
         super(MSFA, self).__init__()
-        self.wq = nn.Conv3d(in_ch, mid_ch, 1)
-        self.wk = nn.Conv2d(in_ch, mid_ch, 1)
-        self.wm = nn.Conv2d(in_ch, mid_ch, 1)
+        self.wq = nn.Conv3d(in_ch3, mid_ch, 1)
+        self.wk = nn.Conv2d(in_ch2, mid_ch, 1)
+        self.wm = nn.Conv2d(mid_ch, 1, 1)
         self.adapt_pool_3d = nn.AdaptiveMaxPool3d((None, shape, shape))
         self.adapt_pool_2d = nn.AdaptiveMaxPool2d(shape)
         self.dot_product_attention = ScaledDotProductAttention(dropout)
 
-    def forward(self, f2d, f3d, shape):
-        x1 = f3d,
-        x2 = self.wk(f3d),
+    def forward(self, f2d, f3d):
+        x1 = f3d
+        x2 = self.wk(f3d)
         # x3 = nn.AdaptiveMaxPool3d(shape)(x2)
         x3 = self.adapt_pool_3d(x2)
         x4 = torch.flatten(x3, start_dim=1)
 
-        y1 = f2d,
-        y2 = self.wq(f2d),
-        y3 = nn.AdaptiveMaxPool2d(shape)(y2)
+        y1 = f2d
+        y2 = self.wq(f2d)
+        y3 = self.adapt_pool_2d(y2)
         y4 = torch.flatten(y3, start_dim=1)
 
-        z1 = self.dot_product_attention(y4, x4, x1)  # scale=0.125
+        z1, attention = self.dot_product_attention(y4, x4, x1)  # scale=0.125
+        x = self.wm(z1)
+        x = torch.cat([x, f2d], dim=1)
+        return x
 
 
 class ScaledDotProductAttention(nn.Module):
@@ -305,34 +311,165 @@ class MultiHeadAttention(nn.Module):
 
 
 class SCAA(nn.Module):
-    def __init__(self):
+    def __init__(self, num_features=2):
         super(SCAA, self).__init__()
         # 3d encoder
-        self.encoder3d = Encoder3d()
+        self.encoder3d = Encoder3d(BasicBlock, layers=[2, 2, 2, 2], conv=nn.Conv3d, num_classes=num_features)
 
         # 2d encoder layer 1
         # self.encoder2d1 = ConBlock2d()
         # self.download1 = Download()
-        # self.msfa1 = MSFA()
+        self.first_conv = ConBlock2d(1, 64, 64, num_features=num_features)
+
         self.down_layer1 = self._make_layer()
+        self.msfa1 = MSFA(64, 24, 2, 16)
+        self.conv1 = ConBlock2d(65, 96, 96, num_features=num_features)
+
         self.down_layer2 = self._make_layer()
+        self.msfa2 = MSFA(96, 32, 2, 8)
+        self.conv2 = ConBlock2d(97, 128, 128, num_features=num_features)
+
         self.down_layer3 = self._make_layer()
+        self.msfa3 = MSFA(128, 64, 4, 4)
+        self.conv3 = ConBlock2d(129, 192, 192, num_features=num_features)
+
         self.down_layer4 = self._make_layer()
+        self.msfa4 = MSFA(192, 64, 4, 4)
+        self.conv4 = ConBlock2d(193, 256, 256, num_features=num_features)
 
         # 2d decoder
-        self.up1 = 
+        self.up1 = Up(256, 320, 128, num_features=num_features)
+        self.up2 = Up(128, 256, 64, num_features=num_features)
+        self.up3 = Up(64, 160, 32, num_features=num_features)
+        self.up4 = Up(32, 112, 32, num_features=num_features)
 
+        self.precls_conv = nn.Sequential(
+            nn.GroupNorm(16, 32),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 2, kernel_size=1)
+        )
+        self.GAP = nn.Sequential(
+            nn.GroupNorm(16, 256),
+            nn.ReLU(inplace=True),
+            torch.nn.AdaptiveAvgPool2d((1, 1))
+        )
+        self.controller = nn.Conv2d(256 + 2, 162, kernel_size=1, stride=1, padding=0)
 
+    def encoding_task(self, task_id):
+        N = task_id.shape[0]
+        task_encoding = torch.zeros(size=(N, 2))
+        for i in range(N):
+            task_encoding[i, task_id[i]] = 1
+        return task_encoding.cuda()
+
+    def parse_dynamic_params(self, params, channels, weight_nums, bias_nums):
+        assert params.dim() == 2
+        assert len(weight_nums) == len(bias_nums)
+        assert params.size(1) == sum(weight_nums) + sum(bias_nums)
+
+        num_insts = params.size(0)
+        num_layers = len(weight_nums)
+
+        params_splits = list(torch.split_with_sizes(
+            params, weight_nums + bias_nums, dim=1
+        ))
+
+        weight_splits = params_splits[:num_layers]
+        bias_splits = params_splits[num_layers:]
+
+        for l in range(num_layers):
+            if l < num_layers - 1:
+                weight_splits[l] = weight_splits[l].reshape(num_insts * channels, -1, 1, 1, 1)
+                bias_splits[l] = bias_splits[l].reshape(num_insts * channels)
+            else:
+                weight_splits[l] = weight_splits[l].reshape(num_insts * 2, -1, 1, 1, 1)
+                bias_splits[l] = bias_splits[l].reshape(num_insts * 2)
+
+        return weight_splits, bias_splits
+
+    def heads_forward(self, features, weights, biases, num_insts):
+        assert features.dim() == 5
+        n_layers = len(weights)
+        x = features
+        for i, (w, b) in enumerate(zip(weights, biases)):
+            x = F.conv3d(
+                x, w, bias=b,
+                stride=1, padding=0,
+                groups=num_insts
+            )
+            if i < n_layers - 1:
+                x = F.relu(x)
+        return x
 
     def _make_layer(self):
-        pass
+        return nn.AvgPool2d(2, stride=2)
 
     # forward
-    def forward(self):
+    def forward(self, x, f3d2, f3d3, f3d4, f3d5, f3d6, task_id):
         # 3d encoder => output 4 feature maps
+        # f3d2, f3d3, f3d4, f3d5, f3d6 = self.encoder3d(x)
 
         # 3d decoder => output for training only
+
         # 2d encoder => output 4 feature maps for residual
+        ################################################################################################################
+        # encoder
+        ################################################################################################################
+        x = self.first_conv()
+        slip1 = x
+
+        x = self.down_layer1(x)
+        x = self.msfa1(x, f3d2)
+        x = self.conv1(x)
+        slip2 = x
+
+        x = self.down_layer2(x)
+        x = self.msfa2(x, f3d3)
+        x = self.conv2(x)
+        slip3 = x
+
+        x = self.down_layer3(x)
+        x = self.msfa3(x, f3d4)
+        x = self.conv3(x)
+        slip4 = x
+
+        x = self.down_layer4(x)
+        x = self.msfa4(x, f3d5)
+        x = self.conv4(x)
+
+        x_feat = self.GAP(x)
+        ################################################################################################################
+        # decoder (conv + upsample)
+        ################################################################################################################
+        x = self.up1(slip4, x)
+        x = self.up2(slip3, x)
+        x = self.up3(slip2, x)
+        x = self.up4(slip1, x)
+
+        task_encoding = self.encoding_task(task_id)
+        task_encoding.unsqueeze_(2).unsqueeze_(2).unsqueeze_(2)
+        x_cond = torch.cat([x_feat, task_encoding], 1)
+        params = self.controller(x_cond)
+        params.squeeze_(-1).squeeze_(-1).squeeze_(-1)
+
+        head_inputs = self.precls_conv(x)
+
+        N, _, D, H, W = head_inputs.size()
+        head_inputs = head_inputs.reshape(1, -1, D, H, W)
+
+        weight_nums, bias_nums = [], []
+        weight_nums.append(8 * 8)
+        weight_nums.append(8 * 8)
+        weight_nums.append(8 * 2)
+        bias_nums.append(8)
+        bias_nums.append(8)
+        bias_nums.append(2)
+        weights, biases = self.parse_dynamic_params(params, 8, weight_nums, bias_nums)
+
+        logits = self.heads_forward(head_inputs, weights, biases, N)
+
+        logits = logits.reshape(-1, 2, D, H, W)
+
         # 3d + 2d => MSFA
 
         # 2d decoder
@@ -344,5 +481,19 @@ class SCAA(nn.Module):
         # dynamic head
 
         # layer for output
+        return logits
 
-        pass
+
+class Up(nn.Module):
+    def __init__(self, in_ch, mid_ch, out_ch, num_features):
+        super(Up, self).__init__()
+
+        # self.up = nn.Upsample(scale_factor=2)
+        self.up = nn.ConvTranspose2d(in_ch, in_ch / 2, 2, stride=2)
+        self.conv = ConBlock2d(mid_ch, out_ch, out_ch, num_features=num_features)
+
+    def forward(self, slip, x):
+        x = self.up(x)
+        x = torch.cat([slip, x], dim=1)
+        x = self.conv(x)
+        return x
