@@ -1,13 +1,16 @@
+import torch
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TestTubeLogger
 import torch.nn as nn
 from sklearn.metrics import confusion_matrix
 # from eval.confusion_matrix import base_confusion
+from loss import loss
 from network.ce_net import CEnet
+from network.scaa import SCAA, SCAA3D
 from opt import get_opts
 from utils import load_ckpt
-from dataset.dataset import train_dataloader, ChaoDataset
+from dataset.dataset import train_dataloader, ChaoDataset, WholeDataset
 
 import pytorch_lightning as pl
 from torch import optim
@@ -35,13 +38,16 @@ class TrainSystem(pl.LightningModule):
         #                   )
         # self.model = Unet(1, 1)
         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        self.model = CEnet()
+        # self.model = CEnet()
+        self.model = SCAA(num_features=8)
+        self.model3d = SCAA3D(num_features=8)
         self.criterion = nn.CrossEntropyLoss() if self.model.n_classes > 1 else nn.BCELoss()
-
+        self.all_train = None
         self.epoch_loss = 0
         self.val = {}
         self.iou_sum = 0
         self.dice_sum = 0
+        self.f3d = None
         self.sdu = self.scheduler()
         # to unnormalize image for visualization
         self.unpreprocess = transforms.Compose([
@@ -49,6 +55,10 @@ class TrainSystem(pl.LightningModule):
             # transforms.Normalize((-1.5,), (1.0,))
             transforms.Normalize((0.5,), (0.5,))
         ])
+        self.loss_seg_DICE = loss.DiceLoss4MOTS(num_classes=1).cuda()
+        self.loss_seg_CE = loss.CELoss4MOTS(num_classes=1, ignore_index=255).cuda()
+        # self.loss_seg_DICE = loss.DiceLoss4MOTS(num_classes=self.hparams.n_classes).cuda()
+        # self.loss_seg_CE = loss.CELoss4MOTS(num_classes=self.hparams.n_classes, ignore_index=255).cuda()
 
         # model
 
@@ -62,18 +72,44 @@ class TrainSystem(pl.LightningModule):
             print('Load model from', self.hparams.ckpt_path)
             load_ckpt(self.model, self.hparams.ckpt_path, self.hparams.prefixes_to_ignore)
 
-    def forward(self, x):
-        return self.model.forward(x)
+    def forward(self, x, pre_train_feature, task_id):
+        return self.model.forward(x, pre_train_feature, task_id)
 
     def on_train_epoch_start(self):
         self.epoch_loss = 0
         super(TrainSystem, self).on_train_epoch_start()
 
-    def training_step(self, batch, batch_nb):
-        x, y = batch.values()
-        y_hat = self.forward(x)
+    # def train_all(self, x):
+    #     x, y = x.values()
 
-        loss = self.criterion(y_hat, y)
+    def training_step(self, batch, batch_nb):
+        a = self.all_train
+        f3d = None
+        for i in a:
+            x = i['image'].transpose(0, 1).unsqueeze(0).cuda()
+            y = i['mask'].transpose(0, 1).unsqueeze(0).cuda()
+            # f3d = self.model3d(self.all_dataloader()['train_all'])
+            f3d = self.model3d(x)
+
+        inputs, labels, _ = batch.values()
+        pred = self.forward(inputs, f3d, task_id=batch['files'][batch_nb]['task_id'])
+
+        term_seg_Dice = self.loss_seg_DICE.forward(pred, labels)
+        term_seg_BCE = self.loss_seg_CE.forward(pred, labels)
+        term_all = term_seg_Dice + term_seg_BCE
+
+        reduce_Dice = torch.mean(term_seg_Dice)
+        reduce_BCE = torch.mean(term_seg_BCE)
+        reduce_all = torch.mean(term_all)
+        # if self.hparams.FP16:
+        #     with amp.scale_loss(term_all, optimizer) as scaled_loss:
+        #         scaled_loss.backward()
+        # else:
+        #     term_all.backward()
+
+        # term_all.backward()
+        loss = term_all
+        # loss = self.criterion(y_hat, y)
         # loss.backward()
         # loss = calc_loss(y_hat, y)
 
@@ -85,14 +121,14 @@ class TrainSystem(pl.LightningModule):
         return {'loss': loss, 'log': tensorboard_logs}
 
     def on_train_epoch_end(self, outputs) -> None:
-        for tag, value in self.model.named_parameters():
-            tag = tag.replace('.', '/')
-            # new
-            self.logger.experiment.add_histogram('weights' + tag, value.data.cpu().numpy(), self.global_step)
-            self.logger.experiment.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), self.global_step)
+        # for tag, value in self.model.named_parameters():
+        #     tag = tag.replace('.', '/')
+        #     new
+            # self.logger.experiment.add_histogram('weights' + tag, value.data.cpu().numpy(), self.global_step)
+            # self.logger.experiment.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), self.global_step)
         super(TrainSystem, self).on_train_epoch_end(outputs)
 
-    def on_validation_epoch_start(self):
+    def on_validation_epoch_start(self) -> None:
         self.val = {
             'DICE': 0,
             'ACC': 0,
@@ -102,13 +138,39 @@ class TrainSystem(pl.LightningModule):
             'F1': 0,
             'LOSS': 0,
         }
+        super(TrainSystem, self).on_validation_epoch_start()
+        a = self.all_train
+        for i in a:
+            x = i['image'].transpose(0, 1).unsqueeze(0).cuda()
+            y = i['mask'].transpose(0, 1).unsqueeze(0).cuda()
+            # f3d = self.model3d(self.all_dataloader()['train_all'])
+            self.f3d = self.model3d(x)
 
     def validation_step(self, batch, batch_idx):
 
-        img, label = batch.values()
-        output = self.forward(img)
-        loss = self.criterion(output, label)
+        img, label, _ = batch.values()
+        output = self.forward(img, self.f3d, task_id=batch['files'][batch_idx]['task_id'])
+        # loss = self.criterion(output, label)
+
+        term_seg_Dice = self.loss_seg_DICE.forward(output, label)
+        term_seg_BCE = self.loss_seg_CE.forward(output, label)
+        term_all = term_seg_Dice + term_seg_BCE
+
+        reduce_Dice = torch.mean(term_seg_Dice)
+        reduce_BCE = torch.mean(term_seg_BCE)
+        reduce_all = torch.mean(term_all)
+        # if self.hparams.FP16:
+        #     with amp.scale_loss(term_all, optimizer) as scaled_loss:
+        #         scaled_loss.backward()
+        # else:
+        #     term_all.backward()
+
+        # term_all.backward()
+        loss = term_all
+
+        # optimizer.step()
         log = {'val_loss': loss}
+
         perd = output > 0.5
 
         ################################################################################################################
@@ -120,7 +182,7 @@ class TrainSystem(pl.LightningModule):
         # dice = (2 * inter.float() + eps) / union.float()
         # confusion_matrix
         tn, fp, fn, tp = confusion_matrix(y_true=label.view(-1).cpu(),
-                                          y_pred=perd.float().view(-1).cpu()).ravel()
+                                          y_pred=perd[:, 1].float().view(-1).cpu()).ravel()
 
         self.val['LOSS'] += loss
         # iou
@@ -191,14 +253,24 @@ class TrainSystem(pl.LightningModule):
         if imgs_dir is not None and masks_dir is not None:
             # dataset = BaseDataset(imgs_dir=imgs_dir, masks_dir=masks_dir, transform=transform,
             #                       target_transform=target_transform)
-            dataset = ChaoDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir, transform=transform,
+            dataset = ChaoDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
+                                  transform=transform,
                                   target_transform=target_transform)
+
+            # dataset = WholeDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
+            #                        transform=transform,
+            #                        target_transform=target_transform)
         else:
             # transform should be given by class hparams
             # dataset = BaseDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir, transform=transform,
             #                       target_transform=target_transform)
-            dataset = ChaoDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir, transform=transform,
+            # dataset = WholeDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
+            #                        transform=transform,
+            #                        target_transform=target_transform)
+            dataset = ChaoDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
+                                  transform=transform,
                                   target_transform=target_transform)
+
         n_val = int(len(dataset) * self.hparams.val_percent)
         n_train = len(dataset) - n_val
         self.n_train = n_train
@@ -208,10 +280,13 @@ class TrainSystem(pl.LightningModule):
         # dataloader
         train_loader = train_dataloader(train, batch_size=self.hparams.batch)
         val_loader = train_dataloader(val, batch_size=self.hparams.batch, ar=True)
+        train_all = train_dataloader(dataset, batch_size=len(dataset), ar=True)
+        self.all_train = train_all
 
         return {
             'train': train_loader,
-            'val': val_loader
+            'val': val_loader,
+            'all': train_all,
         }
 
     # @pl.data_loader
@@ -221,6 +296,9 @@ class TrainSystem(pl.LightningModule):
     # @pl.data_loader
     def val_dataloader(self):
         return self.__dataloader()['val']
+
+    def all_dataloader(self):
+        return self.__dataloader()['all']
 
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=self.hparams.lr)
@@ -276,213 +354,3 @@ if __name__ == '__main__':
                           amp_level='O2')
 
     trainer.fit(systems)
-
-# class Train_copy(object):
-#     def __init__(self, net, device, epochs, batch_size, lr, val_percent, save_cp=None, image_scale=1):
-#         self.step = 0
-#         self.img_scale = image_scale
-#         self.val_percent = val_percent
-#         self.save_cp = save_cp
-#         self.epochs = epochs
-#         self.batch = batch_size
-#         self.device = device
-#         self.lr = lr
-#         self.net = net
-#         self.checkpoint = None
-#         self.opt = None
-#         self.loss = None
-#
-#     def train(self, dir_img, dir_mask, dir_checkpoint=None):
-#         """
-#         train_data_path
-#         :return:
-#         """
-#
-#         # data
-#         dataset = BaseDataset(dir_img, dir_mask, self.img_scale)
-#         n_val = int(len(dataset) * self.val_percent)
-#         n_train = len(dataset) - n_val
-#         train, val = random_split(dataset, [n_train, n_val])
-#
-#         # dataloader
-#         train_loader = train_dataloader(train, batch_size=self.batch)
-#         val_loader = train_dataloader(val, batch_size=self.batch)
-#
-#         # iou writer
-#         writer = SummaryWriter(comment=f'LR_{self.lr}_BS_{self.batch}_SCALE_{self.img_scale}')
-#
-#         logging.info(f'''Starting training:
-#                 Epochs:          {self.epochs}
-#                 Batch size:      {self.batch}
-#                 Learning rate:   {self.lr}
-#                 Training size:   {n_train}
-#                 Validation size: {n_val}
-#                 Checkpoints:     {self.save_cp}
-#                 Device:          {self.device.type}
-#                 Images scaling:  {self.img_scale}
-#             ''')
-#
-#         # optimization
-#         optimizer = optim.Adam(self.net.parameters(), lr=self.lr)
-#         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min' if self.net.n_classes > 1 else 'max',
-#                                                          patience=2)
-#         if self.net.n_classes > 1:
-#             criterion = nn.CrossEntropyLoss()
-#         else:
-#             criterion = nn.BCEWithLogitsLoss()
-#         # hook
-#         # self.hook =
-#         # train
-#         for epoch in range(self.epochs):
-#             self.net.train()
-#             epoch_loss = 0
-#             with tqdm(total=n_train, desc=f'Epoch {epoch + 1}/{self.epochs}', unit='img') as pbar:
-#                 for batch in train_loader:
-#                     imgs = batch['image'].to(device=self.device)
-#                     true_masks = batch['mask'].to(device=self.device)
-#                     # ensure img`s c == net`channel
-#                     assert imgs.shape[1] == self.net.n_channels, \
-#                         f'Network has been defined with {self.net.n_channels} input channels, ' \
-#                         f'but loaded images have {imgs.shape[1]} channels. Please check that ' \
-#                         'the images are loaded correctly.'
-#                     masks_pred = self.net(imgs)
-#                     loss = criterion(masks_pred, true_masks)
-#                     epoch_loss += loss.item()
-#                     writer.add_scalar('Loss/train', loss.item(), self.step)
-#                     pbar.set_postfix(**{'loss ()': loss.item()})
-#
-#                     optimizer.zero_grad()
-#                     loss.backward()
-#                     nn.utils.clip_grad_value_(self.net.parameters(), 0.1)
-#                     optimizer.step()
-#
-#                     pbar.update(imgs.shape[0])
-#                     self.step += 1
-#
-#                     if self.step % (n_train // (10 * self.batch)) == 0:
-#                         for tag, value in self.net.named_parameters():
-#                             tag = tag.replace('.', '/')
-#                             writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), self.step)
-#                             writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), self.step)
-#                         val_score = eval_net(self.net, val_loader, self.device)
-#                         scheduler.step(val_score)
-#                         writer.add_scalar('learning_rate', optimizer.param_groups[0]['lr'], self.step)
-#
-#                         if self.net.n_classes > 1:
-#                             logging.info('Validation cross entropy: {}'.format(val_score))
-#                             writer.add_scalar('Loss/test', val_score, self.step)
-#                         else:
-#                             logging.info('Validation Dice Coeff: {}'.format(val_score))
-#                             writer.add_scalar('Dice/test', val_score, self.step)
-#
-#                         writer.add_images('images', imgs, self.step)
-#                         if self.net.n_classes == 1:
-#                             writer.add_images('masks/true', true_masks, self.step)
-#                             writer.add_images('masks/pred', torch.sigmoid(masks_pred) > 0.5, self.step)
-#             if self.save_cp:
-#                 try:
-#                     os.mkdir(dir_checkpoint)
-#                     logging.info('Created checkpoint directory')
-#                 except OSError:
-#                     pass
-#                 torch.save(self.net.state_dict(),
-#                            dir_checkpoint + f'CP_epoch{epoch + 1}.pth')
-#                 logging.info(f'Checkpoint {epoch + 1} saved !')
-#
-#         writer.close()
-#         # output = self.net(inputs)
-#         # iou
-#         # iou = iou(output, label)
-#         # write loss iou
-#
-#
-# def main(hparams):
-#     model = UNet(hparams)
-#     os.makedirs(hparams.log_dir, exist_ok=True)
-#     try:
-#         log_dir = sorted(os.listdir(hparams.log_dir))[-1]
-#     except IndexError:
-#         log_dir = os.path.join(hparams.log_dir, 'version_0')
-#
-#     checkpoint_callback = ModelCheckpoint(
-#         filepath=os.path.join(log_dir, 'checkpoints'),
-#         # save_best_only=False,
-#         verbose=True,
-#     )
-#     stop_callback = EarlyStopping(
-#         monitor='val_loss',
-#         mode='auto',
-#         patience=5,
-#         verbose=True,
-#     )
-#     trainer = Trainer(
-#         gpus=1,
-#         checkpoint_callback=checkpoint_callback,
-#         early_stop_callback=stop_callback,
-#     )
-#
-#
-# if __name__ == '__main__':
-#     parser = ArgumentParser()
-#     parent_parser = ArgumentParser(add_help=False)
-#     parent_parser.add_argument('--dataset', required=True)
-#     parent_parser.add_argument('--log_dir', default='lightning_logs')
-#
-#     parser = UNet.add_model_specific_args(parent_parser)
-#     hparams = parser.parse_args()
-#
-#     main(hparams)
-
-
-# if __name__ == '__main__':
-#     parser = ArgumentParser()
-#     # dir_img = './data/train/image'
-#     dir_img = '/home/sj/workspace/m/net_without_mu1/data/train/raw/'
-#     # dir_mask = './data/train/label'
-#     dir_mask = '/home/sj/workspace/m/net_without_mu1/data/train/liver_target/'
-#     params = Params(imgs_dir=dir_img, masks_dir=dir_mask, batch=5, val_percent=0.8, lr=0.001)
-#
-#     model = UNet(1, 1, params)
-#     hparams = '../logs'
-#     os.makedirs(hparams, exist_ok=True)
-#     try:
-#         log_dir = sorted(os.listdir(hparams))[-1]
-#     except IndexError:
-#         log_dir = os.path.join(hparams, 'version_0')
-#
-#     checkpoint_callback = ModelCheckpoint(
-#         filepath=os.path.join(log_dir, 'checkpoints'),
-#         save_top_k=False,
-#         verbose=True,
-#     )
-#     stop_callback = EarlyStopping(
-#         monitor='val_loss',
-#         mode='auto',
-#         patience=5,
-#         verbose=True,
-#     )
-#     trainer = Trainer(
-#         gpus=2,
-#         accelerator="ddp",
-#         # distributed_backend="ddp"
-#         # checkpoint_callback=checkpoint_callback,
-#         # early_stop_callback=stop_callback,
-#     )
-#
-#     trainer.fit(model)
-#
-#     # logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-#     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-#     # logging.info(f'Using device {device}')
-#     # net = UNet(1, 1, bilinear=False)
-#     # net.to(device=device)
-#     # try:
-#     #     train_net = Train(net=net, device=device, epochs=5, batch_size=3, lr=0.01, val_percent=0.2)
-#     #     train_net.train(dir_img=dir_img, dir_mask=dir_mask)
-#     # except KeyboardInterrupt:
-#     #     torch.save(net.state_dict(), 'INTERRUPTED.pth')
-#     #     logging.info('Saved interrupt')
-#     #     try:
-#     #         sys.exit(0)
-#     #     except SystemExit:
-#     #         os._exit(0)
