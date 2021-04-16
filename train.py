@@ -59,6 +59,9 @@ class TrainSystem(pl.LightningModule):
         self.loss_seg_CE = loss.CELoss4MOTS(num_classes=1, ignore_index=255).cuda()
         # self.loss_seg_DICE = loss.DiceLoss4MOTS(num_classes=self.hparams.n_classes).cuda()
         # self.loss_seg_CE = loss.CELoss4MOTS(num_classes=self.hparams.n_classes, ignore_index=255).cuda()
+        self._generator = self.__dataloader()
+        self._data = self.refresh_dataloader()
+        # self._data = None
 
         # model
 
@@ -77,7 +80,13 @@ class TrainSystem(pl.LightningModule):
 
     def on_train_epoch_start(self):
         self.epoch_loss = 0
+
         super(TrainSystem, self).on_train_epoch_start()
+        self._data = self.refresh_dataloader()
+        model = self.trainer.get_model()
+        self.trainer.reset_train_dataloader(model)
+        # a = 1
+
 
     # def train_all(self, x):
     #     x, y = x.values()
@@ -121,12 +130,15 @@ class TrainSystem(pl.LightningModule):
         return {'loss': loss, 'log': tensorboard_logs}
 
     def on_train_epoch_end(self, outputs) -> None:
+
+        # self.reset_train_dataloader()
         # for tag, value in self.model.named_parameters():
         #     tag = tag.replace('.', '/')
         #     new
-            # self.logger.experiment.add_histogram('weights' + tag, value.data.cpu().numpy(), self.global_step)
-            # self.logger.experiment.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), self.global_step)
+        # self.logger.experiment.add_histogram('weights' + tag, value.data.cpu().numpy(), self.global_step)
+        # self.logger.experiment.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), self.global_step)
         super(TrainSystem, self).on_train_epoch_end(outputs)
+        # self._data = self.refresh_dataloader()
 
     def on_validation_epoch_start(self) -> None:
         self.val = {
@@ -243,62 +255,74 @@ class TrainSystem(pl.LightningModule):
             self.log('F1/test', self.val['F1'] / percent, on_step=False, on_epoch=True)
 
     def __dataloader(self, imgs_dir=None, masks_dir=None):
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            # transforms.Normalize((-1.5,), (1.0,))
-            transforms.Normalize((0.5,), (0.5,))
-            # transforms.Normalize(0.5, 0.5)
-        ])
-        target_transform = transforms.Compose([transforms.ToTensor()])
-        if imgs_dir is not None and masks_dir is not None:
-            # dataset = BaseDataset(imgs_dir=imgs_dir, masks_dir=masks_dir, transform=transform,
-            #                       target_transform=target_transform)
-            dataset = ChaoDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
-                                  transform=transform,
-                                  target_transform=target_transform)
+        img_list = ChaoDataset.get_list(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir)
+        len_dir = len(img_list)
+        # for i in range(len_dir):
+        i = 0
+        while i < len_dir:
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                # transforms.Normalize((-1.5,), (1.0,))
+                transforms.Normalize((0.5,), (0.5,))
+                # transforms.Normalize(0.5, 0.5)
+            ])
+            target_transform = transforms.Compose([transforms.ToTensor()])
+            if imgs_dir is not None and masks_dir is not None:
+                # dataset = BaseDataset(imgs_dir=imgs_dir, masks_dir=masks_dir, transform=transform,
+                #                       target_transform=target_transform)
+                dataset = ChaoDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
+                                      transform=transform,
+                                      target_transform=target_transform, index=img_list[i])
 
-            # dataset = WholeDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
-            #                        transform=transform,
-            #                        target_transform=target_transform)
-        else:
-            # transform should be given by class hparams
-            # dataset = BaseDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir, transform=transform,
-            #                       target_transform=target_transform)
-            # dataset = WholeDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
-            #                        transform=transform,
-            #                        target_transform=target_transform)
-            dataset = ChaoDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
-                                  transform=transform,
-                                  target_transform=target_transform)
+                # dataset = WholeDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
+                #                        transform=transform,
+                #                        target_transform=target_transform)
+            else:
+                # transform should be given by class hparams
 
-        n_val = int(len(dataset) * self.hparams.val_percent)
-        n_train = len(dataset) - n_val
-        self.n_train = n_train
-        self.n_val = n_val
-        train, val = random_split(dataset, [n_train, n_val])
+                # dataset = BaseDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir, transform=transform,
+                #                       target_transform=target_transform)
 
-        # dataloader
-        train_loader = train_dataloader(train, batch_size=self.hparams.batch)
-        val_loader = train_dataloader(val, batch_size=self.hparams.batch, ar=True)
-        train_all = train_dataloader(dataset, batch_size=len(dataset), ar=True)
-        self.all_train = train_all
+                # dataset = WholeDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
+                #                        transform=transform,
+                #                        target_transform=target_transform)
+                dataset = ChaoDataset(imgs_dir=self.hparams.imgs_dir, masks_dir=self.hparams.masks_dir,
+                                      transform=transform,
+                                      target_transform=target_transform, index=img_list[i])
 
-        return {
-            'train': train_loader,
-            'val': val_loader,
-            'all': train_all,
-        }
+            n_val = int(len(dataset) * self.hparams.val_percent)
+            n_train = len(dataset) - n_val
+            self.n_train = n_train
+            self.n_val = n_val
+            train, val = random_split(dataset, [n_train, n_val])
+
+            # dataloader
+            train_loader = train_dataloader(train, batch_size=self.hparams.batch)
+            val_loader = train_dataloader(val, batch_size=self.hparams.batch, ar=True)
+            train_all = train_dataloader(dataset, batch_size=len(dataset), ar=True)
+            self.all_train = train_all
+            i += 1
+            i %= (len_dir-1)
+            yield {
+                'train': train_loader,
+                'val': val_loader,
+                'all': train_all,
+            }
+
+    def refresh_dataloader(self):
+        # self._data = self.__dataloader().__next__()
+        return next(self._generator)
 
     # @pl.data_loader
     def train_dataloader(self):
-        return self.__dataloader()['train']
+        return self._data['train']
 
     # @pl.data_loader
     def val_dataloader(self):
-        return self.__dataloader()['val']
+        return self._data['val']
 
     def all_dataloader(self):
-        return self.__dataloader()['all']
+        return self._data['all']
 
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=self.hparams.lr)

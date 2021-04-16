@@ -10,6 +10,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 import nibabel as nib
 from nibabel.viewers import OrthoSlicer3D
+
 osp = os.path
 join = os.path.join
 listdir = os.listdir
@@ -77,11 +78,12 @@ class BaseDataset(Dataset):
 def get_data_function(func):
     def printer():
         func()
+
     return printer
 
 
 class ChaoDataset(BaseDataset):
-    def __init__(self, imgs_dir, masks_dir, transform, target_transform, scale=1, mask_suffix='', type='CT'):
+    def __init__(self, imgs_dir, masks_dir, transform, target_transform, index, scale=1, mask_suffix='', type='CT'):
         super(ChaoDataset, self).__init__(imgs_dir, masks_dir, transform, target_transform, scale, mask_suffix,
                                           Base=False)
         self.type = type
@@ -91,7 +93,9 @@ class ChaoDataset(BaseDataset):
         self.sum_mask_ids = []
         if type == 'CT':
             path = self.imgs_dir_root + 'CT/'
-            for case in os.listdir(path):
+            # for case in os.listdir(path):
+            case = index
+            if case is not None:
                 dcm_data = path + case + '/CTdcm2png/'
                 label_data = path + case + '/Ground/'
                 # diff_part = 'CT/' + case
@@ -100,17 +104,17 @@ class ChaoDataset(BaseDataset):
                 label_list = listdir(label_data)
                 dcm_list.sort(key=lambda x: re_pattern.findall(x)[-1] + re_pattern.findall(x)[0])
                 label_list.sort(key=lambda x: re_pattern.findall(x)[-1])
-                ids = []
-                mask_ids = []
+                # ids = []
+                # mask_ids = []
                 for file in dcm_list:
                     result = dcm_data + file[:-4]
-                    ids.append(result)
+                    # ids.append(result)
 
                     # label_result = label_data + 'liver_GT_' + file[-7:-4]
                     label_result = label_data + label_list[dcm_list.index(file)][:-4]
-                    mask_ids.append(label_result)
-                self.sum_ids.append(ids)
-                self.sum_mask_ids.append(mask_ids)
+                    # mask_ids.append(label_result)
+                    self.sum_ids.append(result)
+                    self.sum_mask_ids.append(label_result)
                 # ids = [dcm_data + splitext(file)[0] for file in listdir(dcm_data) if
                 #        not file.startswith('.')]
                 # mask_ids = [label_data + splitext(file)[0] for file in listdir(label_data) if
@@ -121,6 +125,7 @@ class ChaoDataset(BaseDataset):
                 # save_path = path + case + '/CTdcm2png/'
                 # for img in os.listdir(dcm_data):
                 # multi_dcm(dcm_data, save_path)
+        # 未改
         elif type == 'MR':
             path = self.imgs_dir_root + 'MR/'
             for case in os.listdir(path):
@@ -146,7 +151,7 @@ class ChaoDataset(BaseDataset):
             6: [0.8, 0.8, 1.5],
         }
         print("Start preprocessing....")
-        for item in self.ids:
+        for item in self.sum_ids:
             print(item)
             # image_path, label_path = item
             # task_id = int(image_path[16 + 5])
@@ -159,7 +164,7 @@ class ChaoDataset(BaseDataset):
             # label = nib.load(label_file).get_data()
             task_id = 1
             # if task_id == 1:
-                # label = label.transpose((1, 2, 0))
+            # label = label.transpose((1, 2, 0))
             # boud_h, boud_w, boud_d = np.where(label >= 1)
             self.files.append({
                 # "image": img_file,
@@ -171,18 +176,36 @@ class ChaoDataset(BaseDataset):
             })
         # print('{} images are loaded!'.format(len(self.img_ids)))
 
+    @classmethod
+    def get_list(cls, imgs_dir, masks_dir, scale=1, mask_suffix='', type='CT'):
+        type = type
+        imgs_dir_root = imgs_dir
+        masks_dir_root = masks_dir
+        if type == 'CT':
+            path = imgs_dir_root + 'CT/'
+            return os.listdir(path)
+            # for case in os.listdir(path):
 
-    @get_data_function(i)
+            # case = '22'
+            # if case is not None:
+
+    def __len__(self):
+        # sums = 0
+        # for i in self.sum_ids:
+        #     sums += len(i)
+        sums = len(self.sum_ids)
+        return sums
+
+    # @get_data_function(i)
+    # def __getitem__(self, i):
+    #     # img = self.sum_ids[i]
+    #     # mask = self.sum_mask_ids[i]
+    #     # return self._getitem(img, mask, i)
+    #     return self._getitem(self.sum_ids, self.sum_mask_ids)
+
     def __getitem__(self, i):
-        img = self.sum_ids[i]
-        mask = self.sum_mask_ids[i]
-        return self._getitem(img, mask, i)
-
-
-
-    def _getitem(self, img, mask, i):
-        idx = img.ids[i]
-        mask_idx = mask.mask_ids[i]
+        idx = self.sum_ids[i]
+        mask_idx = self.sum_mask_ids[i]
         # mask_name = self.masks_dir + idx + self.mask_suffix + '.*'
         a = mask_idx + self.mask_suffix + '.*'
         mask_file = glob(mask_idx + self.mask_suffix + '.*')

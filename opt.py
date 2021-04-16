@@ -6,7 +6,7 @@ def get_opts():
 
     parser.add_argument('--num_gpus', type=int, default=1,
                         help='number of gpus')
-    parser.add_argument('--batch', type=int, default=4,
+    parser.add_argument('--batch', type=int, default=1,
                         help='number of batch to be used in training')
     parser.add_argument('--n_classes', type=int, default=8,
                         help='number of classes to be used in training')
