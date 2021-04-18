@@ -1,0 +1,1 @@
+{"name": "scaa", "version": 3, "tags_path": "./logs/scaa/version_3/meta_tags.csv", "metrics_path": "./logs/scaa/version_3/metrics.csv", "autosave": false, "description": null, "created_at": "2021-04-18 11:57:25.937257", "exp_hash": "scaa_v3"}

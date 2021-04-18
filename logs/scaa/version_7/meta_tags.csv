@@ -1,0 +1,15 @@
+key,value
+num_gpus,1
+batch,1
+n_classes,8
+ckpt_path,
+load_ckpt,
+imgs_dir,/home/sj/workspace/data/chao_data/Train_Sets/
+masks_dir,/home/sj/workspace/data/chao_data/Train_Sets/
+prefixes_to_ignore,['loss']
+val_percent,0.1
+lr,0.001
+momentum,0.9
+num_epochs,200
+exp_name,scaa
+use_amp,False

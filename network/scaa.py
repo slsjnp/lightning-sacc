@@ -8,6 +8,28 @@ class BasicBlock(nn.Module):
     expansion = 1
 
     # def __init__(self, in_ch, out_ch, num_features, mid_ch=None):
+
+    # def __init__(self, conv, inplanes, planes, num_features, groups=1, stride=1, downsample=None,
+    #              base_width=64, norm_layer=None, res=True):
+    #     # self.conv3d = nn.Conv3d(in_ch, out_ch, ker)
+    #     # self.ReLU1 = nn.ReLU(inplace=True)
+    #     super(BasicBlock, self).__init__()
+    #     self.res = res
+    #     self.conv = conv(inplanes, planes, kernel_size=1, stride=stride, groups=groups)
+    #
+    #     self.resconv = nn.Sequential(
+    #         conv(inplanes, planes, kernel_size=3, padding=1, stride=stride, groups=groups),
+    #         # nn.InstanceNorm3d(num_features),
+    #         norm_layer(planes),
+    #         nn.ReLU(inplace=True),
+    #
+    #         conv(planes, planes, kernel_size=3, padding=1),
+    #         # nn.InstanceNorm3d(num_features),
+    #         norm_layer(planes),
+    #         # nn.ReLU(inplace=True),
+    #     )
+    #     self.ReLU = nn.ReLU(inplace=True)
+
     def __init__(self, conv, inplanes, planes, num_features, groups=1, stride=1, downsample=None,
                  base_width=64, norm_layer=None, res=True):
         # self.conv3d = nn.Conv3d(in_ch, out_ch, ker)
@@ -15,13 +37,17 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         self.res = res
         self.conv = conv(inplanes, planes, kernel_size=1, stride=stride, groups=groups)
+        mid_ch = 1
+        if inplanes / 2 >= 1:
+            mid_ch = int(inplanes / 2)
+        # mid_ch
         self.resconv = nn.Sequential(
-            conv(inplanes, planes, kernel_size=3, padding=1, stride=stride, groups=groups),
+            conv(inplanes, mid_ch, kernel_size=3, padding=1, stride=stride, groups=groups),
+            conv(mid_ch, mid_ch, kernel_size=3, padding=1, stride=stride, groups=groups),
             # nn.InstanceNorm3d(num_features),
-            norm_layer(planes),
+            norm_layer(mid_ch),
             nn.ReLU(inplace=True),
-
-            conv(planes, planes, kernel_size=3, padding=1),
+            conv(mid_ch, planes, kernel_size=3, padding=1),
             # nn.InstanceNorm3d(num_features),
             norm_layer(planes),
             # nn.ReLU(inplace=True),

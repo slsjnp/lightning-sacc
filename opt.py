@@ -31,14 +31,14 @@ def get_opts():
                         help='which type to load .pth')
     parser.add_argument('--imgs_dir', type=str,
                         # default='/home/sj/workspace/m/MA_NET/LITS/train/train_small/',
-                        default='/opt/data/private/data/chao_data/Train_Sets/',
-                        # default='/home/sj/workspace/data/chao_data/Train_Sets/',
+                        # default='/opt/data/private/data/chao_data/Train_Sets/',
+                        default='/home/sj/workspace/data/chao_data/Train_Sets/',
                         # default='/home/sj/workspace/data/LITS-Challenge-Train-Data/data/',
                         help='image directory of history dataset')
     parser.add_argument('--masks_dir', type=str,
                         # default='/home/sj/workspace/m/MA_NET/LITS/train/target_small/',
-                        default='/opt/data/private/data/chao_data/Train_Sets/',
-                        # default='/home/sj/workspace/data/chao_data/Train_Sets/',
+                        # default='/opt/data/private/data/chao_data/Train_Sets/',
+                        default='/home/sj/workspace/data/chao_data/Train_Sets/',
                         # default='/home/sj/workspace/data/LITS-Challenge-Train-Data/label/',
                         help='image directory of history masks dataset')
     parser.add_argument('--prefixes_to_ignore', nargs='+', type=str, default=['loss'],
