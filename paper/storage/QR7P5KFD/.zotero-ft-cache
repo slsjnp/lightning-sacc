@@ -1,0 +1,170 @@
+A FULLY CONVOLUTIONAL NEURAL NETWORK BASED STRUCTURED PREDICTION APPROACH TOWARDS THE RETINAL VESSEL SEGMENTATION
+Avijit Dasgupta∗, Sonam Singh∗
+Indian Institute of Technology Kharagpur West Bengal, India-721302
+
+arXiv:1611.02064v2 [cs.CV] 16 Nov 2016
+
+ABSTRACT
+Automatic segmentation of retinal blood vessels from fundus images plays an important role in the computer aided diagnosis of retinal diseases. The task of blood vessel segmentation is challenging due to the extreme variations in morphology of the vessels against noisy background. In this paper, we formulate the segmentation task as a multi-label inference task and utilize the implicit advantages of the combination of convolutional neural networks and structured prediction. Our proposed convolutional neural network based model achieves strong performance and signiﬁcantly outperforms the stateof-the-art for automatic retinal blood vessel segmentation on DRIVE dataset with 95.33% accuracy and 0.974 AUC score.
+Index Terms— Computer-aided diagnosis, retinal vessels, convolution neural networks, image segmentation.
+1. INTRODUCTION
+Segmentation and localization of retinal blood vessels serve as an important cue for the diagnosis of opthalmological diseases such as diabetes, hypertension, microaneurysms and arteriochlerosis [1]. However, manual segmentation of blood vessels is both tedious and time consuming. Thus, the focus of this paper is on automatic segmentation of retinal blood vessels from fundus images. The task of automatic segmentation of blood vessels is challenging due to their abrupt variations in branching patterns. This task becomes even more challenging due the presence of noisy background and tortuosity.
+Related Work: Previous attempts of blood vessels segmentation can be broadly divided into two categories. The ﬁrst group used unsupervised methods which includes vessel tracking [2], adaptive thresholding [3], and morphology based techniques [4] etc. The second group utilized the supervised machine learning algorithms which make use of hand-labeled images (i.e. ground truth) for learning models. Most of the
+∗equal contribution. Avijit Dasgupta is afﬁliated with Electronics and Communication Dept. Sonam Singh is afﬁliated with Advanced Technology Development Centre Email: avijitdasgupta9@gmail.com, sonamsingh19@gmail.com Project website:https://avijit9.github.io/my posts/FCN Retina.html
+
+supervised methods extract hand-crafted features e.g. ridge features, Gabor at different scales and degrees etc. from the fundus images and classify them using Nearest Neighbour, Bayesian, Gaussian Mixture Models, Support Vector Machine, Artiﬁcial Neural Networks or their variants [5, 6, 7]. Recently, Deep Learning (DL) has gained a lot of interest due to their highly discriminative representations that has outperformed many state-of-the-art techniques in the ﬁeld of computer vision and natural language processing. Recently, it has also attracted medical imaging research community. In 2016, Liskowski et al. [8] proposed a deep convolutional neural network architecture for vessel segmentation in fundus images. Maji et al. [9] proposed an ensemble of 12 deep convolutional neural networks and take the mean of the outputs of all networks as the ﬁnal decision. Lahiri et al. [10] proposed an architecture which is based on an ensemble of stacked denoising autoencoders (SDAE). The ﬁnal decision is the combination of all SDAEs outputs passed through a softmax layer. Contribution: In this paper, we propose a fully convolutional neural network architecture for blood vessel segmentation. As suggested by [8], we formulate the vessel segmentation problem as a multi-label inference problem which is learnt by joint loss function. In this way, we can learn about the class label dependencies of neighboring pixels which play an important role in segmentation of anatomical structures. To the best of our knowledge, our work is the ﬁrst of its kind to leverage the combined advantage of fully convolutional neural network and structured prediction approach for retinal blood vessel segmentation in fundus images. The rest of the paper is organized as follows: Section 2 deﬁnes the problem statement more formally and describes the proposed methodology in detail. In Section 3 we show the experimental results on publicly available DRIVE [5] dataset which validate our claims. Finally, in Section 4 we conclude our paper with a summary of our proposed methodology and future scope.
+
+2. PROPOSED METHODOLOGY
+
+2.1. Problem Statement
+
+Given a color fundus image IM×N×3 and the intensity value
+
+at (x, y) is denoted by I(x, y). Let us denote the neighbor-
+
+hood of the pixel at position (x, y) by N (x, y). Our task
+
+is to classify each and every pixel contained in the neigh-
+
+borhood N (x, y) into either of the classes denoted by ω =
+
+(a)
+
+{vessels, background}. Hence, by training the CNN we
+
+learn a function H(ω|I, N (x, y)).
+
+We will start with a brief introduction of convolutional
+
+neural networks (CNN) followed by the proposed technique.
+
+2.2. Convolutional Neural Networks
+
+Convolutional neural networks (CNN) are a special type of neural network where neurons are arranged in 3-dimensional grid (width, height and depth). Every layer of a CNN takes a 3D input volumes and tranforms them into 3D output volumes. There are four main types of layer in CNN architectures: Convolutional layer, Pooling layer, Upsampling and Fully-connected layer. A CNN architecture can be made by stacking these layers.
+Each convolutional layer transforms input representation using convolution operation. Mathematically, if Wil denotes the weights of i-th ﬁlter of l-th convolutional layer, gl−1 denotes the inputs coming from previous layer, and gil be the non-linearity applied on that layer, then the output can be written as follows:
+
+yil = gil(Wil ⊗ gl−1),
+
+(1)
+
+where ’⊗’ denotes convolution operation. A pooling layer simply performs spatial downsampling of
+input feature maps while the upsampling layer does the exact opposite.
+
+2.3. Preprocessing and Data Preparation
+
+Given a RGB fundus image, I, we extract the green channel image, Ig, as the blood vessels manifest high contrast in green channel [11]. Then, we normalize the images by using the following formula-
+
+Ig
+
+=
+
+Ig
+
+− σ
+
+µ ,
+
+(2)
+
+where µ and σ denote the mean and standard deviation of the data.
+Contrast limited adaptive histogram equalization [12] and gamma adjustment is applied on normalized images. Finally, the intensity values are scaled to have a minimum value of 0 and a maximum value of 1 to get the preprocessed image denoted by Iˆ. Fig. 1 shows some pre-processed images alongwith the original image from DRIVE [5] dataset.
+
+(b)
+Fig. 1: Visualization of the preprocessing step on the images taken from DRIVE dataset: (a) Original RGB images, (b) Preprocessed images. It can be clearly seen that the vessels are more prominent in preprocessed image than original images.
+2.4. The Proposed Architecture
+Each layer of CNN learn task dependent hierarchical features. The input to the ﬁrst convolutional layer in the proposed architecture is a 1 × 28 × 28 patch extracted from the preprocessed image Iˆ.
+The proposed CNN architecture has the same layer organization as shown in Fig. 2. Each of the ﬁrst and second convolutional layers ( C1 and C2) contain 32 ﬁlters with padding for same size. The third layer (M1) is a max-pooling layer with a pooling window of 2 × 2. The fourth and ﬁfth layers (C3 and C4) are convolutional layers with 64 ﬁlters in each layer. The sixth layer (U1) is an upsampling layer to increase spatial dimension for structured output. The seventh and eighth layers (C5 and C6) are convolutional layers with same size padding and 32 ﬁlters each. The output is of dimension 1 × 28 × 28. Kernel size of 3 × 3 is used in all convolutional layers. Rectiﬁed Linear Unit (ReLU) activation is used in the whole model except the last layer where softmax is used. Dropout with probability 0.7 is used after each convolutional layer. In multi-label learning problem we learn to predict a vector instead of predicting a scalar value. In our proposed architecture, we use cross-entropy loss which is deﬁned as:
+JCE(y, yˆ) = − yilogyˆi + (1 − yi)log(1 − yˆi), (3)
+where both yi and yˆi are ground truth and predicted vectors respectively. Both have the same dimension as the neighborhood of pixel at location (x, y) i.e. N (x, y) in Iˆ.
+
+Input Patch 32 @ 1 x 28 x28 32 @ 1 x 28 x 28 32@ 1 x 14x14 64 @ 14 x 14 x 1 64 @ 14 x 14 x 1 64 @ 1 x 28 x 28 32 @ 1 x 28 x28 32 @ 1 x 28 x28
+
+Target
+
+[1 x 28 x 28 ]
+
+C1: [32 @ 3 x 3 ]
+
+C2: [32 @ 3 x 3 ]
+
+M1: [2 x 2]
+
+C3: [64 @ 3 x 3]
+
+C4: [64 @ 3 x 3]
+
+U1: [2 x 2]
+
+C5: [32 @ 3 x 3 ]
+
+C6: [32 @ 3 x 3 ]
+
+[1 x 28 x 28 ]
+
+Fig. 2: The proposed fully convolutional architucture for structured prediction desgined to segment retinal blood vessels from fundus images.
+
+3. RESULTS AND DISCUSSIONS
+We have evaluated the performance of our proposed method on a very popular and publicly available DRIVE [5] dataset.
+
+3.1. Training Parameters and Evaluation Metrics
+(a)
+Throughout the experiments, we have ﬁxed the learning rate to be 0.0001 and RMSprop [13] optimization algorithm is used with momentum ﬁxed at 0.7. Our model is trained for 60 epochs with a batch size of 32.
+We perform the evaluation in terms of Precision, Sensitivity, Speciﬁcity, Accuracy and Area under the ROC curve (AUC).
+(b)
+3.2. Experimental results
+
+In Table 1, we demonstrate signiﬁcant improvement in performance with our proposed method against other state-ofthe-art results from recent works.
+
+Method Orlando et al. [14] Lahiri et al. [10]
+Maji et al. [9] Fu et al. [15] Dai et al. [16] Soares et al. [6] Zhang et al. [17] Niemeijer et al. [18] Vega et al. [19] Fathi et al. [20] Fraz et al. [21] Proposed method
+
+Precision 0.7854 0.8205 0.8112 0.8498
+
+Sensitivity 0.7897 0.7500 0.7294 0.7359 0.7283 0.7120 0.6793 0.7444 0.7152 0.7302 0.7691
+
+Speciﬁcity 0.9684 0.9800 0.9720 0.9788 0.9724 0.9725 0.9600 0.9768 0.9742 0.9801
+
+Accuracy -
+0.9480 0.9470
+0.9418 0.9466 0.7120 0.9416 0.9414 0.9430 0.9422 0.9533
+
+AUC -
+0.9500 0.9283 0.9470
+0.9614
+0.9294
+0.9744
+
+Table 1: Quantitative comparison of our proposed method on the DRIVE dataset with other existing state-of-the-art methods.
+
+Fig. 3 shows the qualitative outputs of our proposed method. More visualizations of results and intermediate results can be found at project website 1.
+1https://avijit9.github.io/my posts/FCN Retina.html
+
+(c)
+Fig. 3: Visualization of the prediction made by our proposed technique on three samples randomly taken from the DRIVE dataset: (a) Original preprocessed image (b) Corresponding ground truth and (c) Segmented output.
+4. CONCLUSION
+Deep neural networks can learn hierarchical feature representations from the raw pixel data without any domainknowledge. This has tremendous potential in medical imaging where handcrafting features can be tedious. In this paper, we propose a fully convolutional architecture capable of structured prediction for retinal vessel segmentation task. We demonstrated state-of-the-art performance of our proposed architecture on DRIVE database.
+
+5. REFERENCES
+[1] Jack J Kanski and Brad Bowling, Clinical ophthalmology: a systematic approach, Elsevier Health Sciences, 2011.
+[2] Y. A. Tolias and S. M. Panas, “A fuzzy vessel tracking algorithm for retinal images based on fuzzy clustering,” IEEE TMI, vol. 17, no. 2, pp. 263–273, 1998.
+[3] X. Jiang and D. Mojon, “Adaptive local thresholding by veriﬁcation-based multithreshold probing with application to vessel detection in retinal images,” IEEE TPAMI, vol. 25, no. 1, pp. 131–137, 2003.
+[4] T. Walter and J. Klein, “Segmentation of color fundus images of the human retina: Detection of the optic disc and the vascular tree using morphological techniques,” in International Symposium on Medical Data Analysis. Springer, 2001, pp. 282–287.
+[5] Joes Staal, Michael D Abra`moff, Meindert Niemeijer, Max A Viergever, and Bram van Ginneken, “Ridgebased vessel segmentation in color images of the retina,” IEEE TMI, vol. 23, no. 4, pp. 501–509, 2004.
+[6] Joa˜o VB Soares, Jorge JG Leandro, Roberto M Cesar, Herbert F Jelinek, and Michael J Cree, “Retinal vessel segmentation using the 2-d gabor wavelet and supervised classiﬁcation,” IEEE TMI, vol. 25, no. 9, pp. 1214–1222, 2006.
+[7] S Roychowdhury, D D Koozekanani, and K K Parhi, “Blood vessel segmentation of fundus images by major vessel extraction and subimage classiﬁcation,” IEEE JBHI, vol. 19, no. 3, pp. 1118–1128, 2015.
+[8] P. Liskowski and K. Krawiec, “Segmenting retinal blood vessels with deep neural networks,” IEEE TMI, vol. PP, no. 99, pp. 1–1, 2016.
+[9] D. Maji, A. Santara, P. Mitra, and D. Sheet, “Ensemble of deep convolutional neural networks for learning to detect retinal vessels in fundus images,” CoRR, vol. abs/1603.04833, 2016.
+[10] A. Lahiri, A. G. Roy, D. Sheet, and P. K. Biswas, “Deep neural ensemble for retinal vessel segmentation in fundus images towards achieving label-free angiography,” in EMBC 2016, IEEE, Aug 2016, pp. 1340–1343.
+[11] B. Yin, H. Li, B. Sheng, X. Hou, Y. Chen, W. Wu, P. Li, R. Shen, Y. Bao, and W. Jia, “Vessel extraction from non-ﬂuorescein fundus images using orientation-aware detector,” Medical image analysis, vol. 26, no. 1, pp. 232–242, 2015.
+
+[12] Stephen M Pizer, R Eugene Johnston, James P Ericksen, Bonnie C Yankaskas, and Keith E Muller, “Contrastlimited adaptive histogram equalization,” in Publ by IEEE, 1990.
+[13] Tijmen Tieleman and Geoffrey Hinton, “Lecture 6.5rmsprop: Divide the gradient by a running average of its recent magnitude,” COURSERA: Neural Networks for Machine Learning, vol. 4, no. 2, 2012.
+[14] Jose Orlando, Elena Prokofyeva, and Matthew Blaschko, “A discriminatively trained fully connected conditional random ﬁeld model for blood vessel segmentation in fundus images,” IEEE TMI, 2016.
+[15] H. Fu, Y. Xu, D. W. K. Wong, and J. Liu, “Retinal vessel segmentation via deep learning network and fullyconnected conditional random ﬁelds,” in ISBI, IEEE, April 2016, pp. 698–701.
+[16] Peishan Dai, Hanyuan Luo, Hanwei Sheng, Yali Zhao, Ling Li, Jing Wu, Yuqian Zhao, and Kenji Suzuki, “A new approach to segment both main and peripheral retinal vessels based on gray-voting and gaussian mixture model,” PloS one, vol. 10, no. 6, pp. e0127748, 2015.
+[17] Bob Zhang, Lin Zhang, Lei Zhang, and Fakhri Karray, “Retinal vessel extraction by matched ﬁlter with ﬁrstorder derivative of gaussian,” Computers in biology and medicine, vol. 40, no. 4, pp. 438–445, 2010.
+[18] Meindert Niemeijer, Joes Staal, Bram van Ginneken, Marco Loog, and Michael D Abramoff, “Comparative study of retinal vessel segmentation methods on a new publicly available database,” in Medical Imaging 2004. ISOP, 2004, pp. 648–656.
+[19] Roberto Vega, Gildardo Sanchez-Ante, Luis E FalconMorales, Humberto Sossa, and Elizabeth Guevara, “Retinal vessel extraction using lattice neural networks with dendritic processing,” Computers in biology and medicine, vol. 58, pp. 20–30, 2015.
+[20] Abdolhossein Fathi and Ahmad Reza Naghsh-Nilchi, “Automatic wavelet-based retinal blood vessels segmentation and vessel diameter estimation,” Biomedical Signal Processing and Control, vol. 8, no. 1, pp. 71–80, 2013.
+[21] Muhammad M Fraz, Paolo Remagnino, Andreas Hoppe, Bunyarit Uyyanonvara, Christopher G Owen, Alicja R Rudnicka, and SA Barman, “Retinal vessel extraction using ﬁrst-order derivative of gaussian and morphological processing,” in International Symposium on Visual Computing. Springer, 2011, pp. 410–420.
+

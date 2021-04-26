@@ -95,6 +95,7 @@ class ChaoDataset(BaseDataset):
             path = self.imgs_dir_root + 'CT/'
             # for case in os.listdir(path):
             case = index
+            # case = '27'
             if case is not None:
                 dcm_data = path + case + '/CTdcm2png/'
                 label_data = path + case + '/Ground/'

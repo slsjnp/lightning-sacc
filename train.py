@@ -39,8 +39,10 @@ class TrainSystem(pl.LightningModule):
         # self.model = Unet(1, 1)
         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         # self.model = CEnet()
-        self.model = SCAA(num_features=8)
-        self.model3d = SCAA3D(num_features=8)
+        # *****************************************
+        self.model = SCAA(num_features=1)
+        self.model3d = SCAA3D(num_features=1)
+        # *****************************************
         self.criterion = nn.CrossEntropyLoss() if self.model.n_classes > 1 else nn.BCELoss()
         self.all_train = None
         self.epoch_loss = 0
@@ -103,13 +105,17 @@ class TrainSystem(pl.LightningModule):
         inputs, labels, _ = batch.values()
         pred = self.forward(inputs, f3d, task_id=batch['files'][batch_nb]['task_id'])
 
-        term_seg_Dice = self.loss_seg_DICE.forward(pred, labels)
-        term_seg_BCE = self.loss_seg_CE.forward(pred, labels)
-        term_all = term_seg_Dice + term_seg_BCE
-
-        reduce_Dice = torch.mean(term_seg_Dice)
-        reduce_BCE = torch.mean(term_seg_BCE)
-        reduce_all = torch.mean(term_all)
+        # # *****************************************
+        # term_seg_Dice = self.loss_seg_DICE.forward(pred, labels)
+        # term_seg_BCE = self.loss_seg_CE.forward(pred, labels)
+        # term_all = term_seg_Dice + term_seg_BCE
+        #
+        #
+        # reduce_Dice = torch.mean(term_seg_Dice)
+        # reduce_BCE = torch.mean(term_seg_BCE)
+        # reduce_all = torch.mean(term_all)
+        # loss = term_all
+        # # *****************************************
         # if self.hparams.FP16:
         #     with amp.scale_loss(term_all, optimizer) as scaled_loss:
         #         scaled_loss.backward()
@@ -117,8 +123,8 @@ class TrainSystem(pl.LightningModule):
         #     term_all.backward()
 
         # term_all.backward()
-        loss = term_all
-        # loss = self.criterion(y_hat, y)
+
+        loss = self.criterion(pred, labels)
         # loss.backward()
         # loss = calc_loss(y_hat, y)
 
@@ -134,9 +140,9 @@ class TrainSystem(pl.LightningModule):
         # self.reset_train_dataloader()
         # for tag, value in self.model.named_parameters():
         #     tag = tag.replace('.', '/')
-        #     new
-        # self.logger.experiment.add_histogram('weights' + tag, value.data.cpu().numpy(), self.global_step)
-        # self.logger.experiment.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), self.global_step)
+        # #     new
+        #     self.logger.experiment.add_histogram('weights' + tag, value.data.cpu().numpy(), self.global_step)
+        #     self.logger.experiment.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), self.global_step)
         super(TrainSystem, self).on_train_epoch_end(outputs)
         # self._data = self.refresh_dataloader()
 
@@ -162,28 +168,31 @@ class TrainSystem(pl.LightningModule):
 
         img, label, _ = batch.values()
         output = self.forward(img, self.f3d, task_id=batch['files'][batch_idx]['task_id'])
-        # loss = self.criterion(output, label)
 
-        term_seg_Dice = self.loss_seg_DICE.forward(output, label)
-        term_seg_BCE = self.loss_seg_CE.forward(output, label)
-        term_all = term_seg_Dice + term_seg_BCE
 
-        reduce_Dice = torch.mean(term_seg_Dice)
-        reduce_BCE = torch.mean(term_seg_BCE)
-        reduce_all = torch.mean(term_all)
-        # if self.hparams.FP16:
-        #     with amp.scale_loss(term_all, optimizer) as scaled_loss:
-        #         scaled_loss.backward()
-        # else:
-        #     term_all.backward()
-
-        # term_all.backward()
-        loss = term_all
-
+        # # **********************************************************
+        loss = self.criterion(output, label)
+        # term_seg_Dice = self.loss_seg_DICE.forward(output, label)
+        # term_seg_BCE = self.loss_seg_CE.forward(output, label)
+        # term_all = term_seg_Dice + term_seg_BCE
+        #
+        # reduce_Dice = torch.mean(term_seg_Dice)
+        # reduce_BCE = torch.mean(term_seg_BCE)
+        # reduce_all = torch.mean(term_all)
+        # # if self.hparams.FP16:
+        # #     with amp.scale_loss(term_all, optimizer) as scaled_loss:
+        # #         scaled_loss.backward()
+        # # else:
+        # #     term_all.backward()
+        #
+        # # term_all.backward()
+        # loss = term_all
+        # # **********************************************************
         # optimizer.step()
+
         log = {'val_loss': loss}
 
-        perd = output > 0.5
+        pred = output > 0.5
 
         ################################################################################################################
         eps = 0.0001
@@ -194,7 +203,11 @@ class TrainSystem(pl.LightningModule):
         # dice = (2 * inter.float() + eps) / union.float()
         # confusion_matrix
         tn, fp, fn, tp = confusion_matrix(y_true=label.view(-1).cpu(),
-                                          y_pred=perd[:, 1].float().view(-1).cpu()).ravel()
+                                          y_pred=pred.float().view(-1).cpu()).ravel()
+        # # **********************************************************
+        # tn, fp, fn, tp = confusion_matrix(y_true=label.view(-1).cpu(),
+        #                                   y_pred=pred[:, 1].float().view(-1).cpu()).ravel()
+        # # **********************************************************
 
         self.val['LOSS'] += loss
         # iou
@@ -220,10 +233,11 @@ class TrainSystem(pl.LightningModule):
         self.val['F1'] += f1
         ################################################################################################################
         self.logger.experiment.add_images('images', img, self.global_step)
-        if self.model.n_classes == 1:
-            self.logger.experiment.add_images('masks/true', label, self.global_step)
-            self.logger.experiment.add_images('masks/pred', output > 0.5, self.global_step)
-
+        # if self.model.n_classes == 1:
+            # self.logger.experiment.add_images('masks/true', label, self.global_step)
+            # self.logger.experiment.add_images('masks/pred', output > 0.5, self.global_step)
+        self.logger.experiment.add_images('masks/true', label, self.global_step)
+        self.logger.experiment.add_images('masks/pred', pred, self.global_step)
         return {'log': log}
 
     def on_validation_epoch_end(self):

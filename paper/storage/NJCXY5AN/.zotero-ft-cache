@@ -1,0 +1,1548 @@
+Co-Scale Conv-Attentional Image Transformers
+
+Weijian Xu*, Yifan Xu*, Tyler Chang, Zhuowen Tu University of California San Diego
+{wex041, yix081, tachang, ztu}@ucsd.edu
+
+arXiv:2104.06399v1 [cs.CV] 13 Apr 2021 ImageNet Top-1 Accuracy (%)
+
+Abstract
+In this paper, we present Co-scale conv-attentional image Transformers (CoaT), a Transformer-based image classiﬁer equipped with co-scale and conv-attentional mechanisms. First, the co-scale mechanism maintains the integrity of Transformers’ encoder branches at individual scales, while allowing representations learned at different scales to effectively communicate with each other; we design a series of serial and parallel blocks to realize the co-scale attention mechanism. Second, we devise a convattentional mechanism by realizing a relative position embedding formulation in the factorized attention module with an efﬁcient convolution-like implementation. CoaT empowers image Transformers with enriched multi-scale and contextual modeling capabilities. On ImageNet, relatively small CoaT models attain superior classiﬁcation results compared with the similar-sized convolutional neural networks and image/vision Transformers. The effectiveness of CoaT’s backbone is also illustrated on object detection and instance segmentation, demonstrating its applicability to the downstream computer vision tasks.
+1. Introduction
+A notable recent development in artiﬁcial intelligence is the creation of attention mechanisms [44] and Transformers [36], which have made a profound impact in a range of ﬁelds including natural language processing [6, 23], document analysis [45], speech recognition [7], and computer vision [8, 2]. In the past, state-of-the-art image classiﬁers have been built primarily on convolutional neural networks (CNNs) [16, 15, 30, 29, 10, 42] that operate on layers of ﬁltering processes. Recent developments [34, 8] however begin to show encouraging results for Transformer-based image classiﬁers.
+In essence, both the convolution [16] and attention [44] operations address the fundamental representation problem for structured data (e.g. images and text) by modeling the
+* indicates equal contribution. Code at https://github.com/mlpc-ucsd/CoaT.
+
+82
+
+Co(aST)-Li
+
+80
+
+C(Moai)T Co(MaTi)-Li
+
+T2T-ViT-14 DeiT-S PVT-S
+
+78 C(oTa)T
+
+R50
+
+Co(aTT)-Li
+
+76
+
+T2T-ViT-19 PVT-M R101
+
+PVT-L
+
+DeiT-B ViT-B
+
+T2T-ViT-12 PVT-T
+
+74 T2T-ViT-10
+
+72
+
+DeiT-T
+
+70
+
+R18
+
+CoaT-Lite (ours) CoaT (ours) DeiT (baseline) T2T PVT ResNet ViT
+
+0 10 20 30 40 50 60 70 80 90
+Number of Parameters (Millions)
+
+Figure 1. Model Size vs. ImageNet Accuracy. Our CoaT model signiﬁcantly outperforms other image Transformers. In particular, CoaT achieves competitive accuracies (78.2% and 80.8% top-1) compared to EfﬁcientNet B0 and B2 with similar model size. Details are in Table 2.
+
+local contents, as well as the contexts. The receptive ﬁelds in CNNs are gradually expanded through a series of convolution operations. The attention mechanism [44, 36] is, however, different from the convolution operations: (1) the receptive ﬁeld at each location or token in self-attention [36] readily covers the entire input space since each token is “matched” with all tokens including itself; (2) the selfattention operation for each pair of tokens computes a dot product between the “query” (the token in consideration) and the “key” (the token being matched with) to weight the “value” (of the token being matched with). Moreover, although the convolution and the self-attention operations both perform a weighted sum, their weights are computed differently: in CNNs, the weights are learned during training but ﬁxed (or gated [5]) during testing; in the self-attention mechanism, the weights are dynamically computed based on the similarity or afﬁnity between every pair of tokens. As a consequence, the self-similarity operation in the self-attention mechanism provides modeling means that are potentially more adaptive and general than convolution operations. In addition, the introduction of position encodings and embeddings [36] provides Transformers with additional ﬂexibility
+
+1
+
+to model spatial conﬁgurations beyond ﬁxed input structures. Of course, the advantages of the attention mechanism are
+not given for free, since the self-attention operation computes an afﬁnity/similarity that is more computationally demanding than linear ﬁltering in convolution. The early development of Transformers has been mainly focused on natural language processing tasks [36, 6, 23] since text is “shorter” than an image, and text is easier to tokenize. In computer vision, self-attention has been adopted to provide added modeling capability for various applications [39, 43, 50]. With the underlying framework increasingly developed [8, 34], Transformers start to bear fruit in computer vision [2, 8] by demonstrating their enriched modeling capabilities.
+In the seminal DEtection TRansformer (DETR) [2] algorithm, Transformers are adopted to perform object detection and panoptic segmentation, but DETR still uses CNN backbones to extract the basic image features. Efforts have recently been made to build image classiﬁers from scratch, all based on Transformers [8, 34, 38]. While Transformer-based image classiﬁers have reported encouraging results, performance and design gaps to the well-developed CNN models still exist. For example, in [8, 34], an input image is divided into a single grid of ﬁxed patch size. In this paper, we develop Co-scale conv-attentional image Transformers (CoaT) by introducing two mechanisms of practical signiﬁcance to Transformer-based image classiﬁers. The contributions of our work are summarized as follows:
+• We introduce a co-scale mechanism to image Transformers by maintaining encoder branches at separate scales while engaging cross-layer attention. Two types of co-scale blocks are developed, namely a serial and a parallel block, realizing ﬁne-to-coarse, coarse-to-ﬁne, and cross-scale attention image modeling.
+• We design a conv-attention module to realize relative position embeddings in the factorized attention module using a convolution-like attention operation that achieves signiﬁcantly enhanced computation efﬁciency when compared with vanilla self-attention layers in Transformers.
+Our resulting Co-scale conv-attentional image Transformers (CoaT) learn effective representations under a modularized architecture. On ImageNet, CoaT achieves stateof-the-art classiﬁcation results when compared with the competitive convolutional neural networks (e.g. EfﬁcientNet [33]), while signiﬁcantly outperforming the competing Transformer-based image classiﬁers by a large margin [8, 34, 38].
+2. Related Works
+Our work is inspired by the recent efforts [8, 34] to realize Transformer-based image classiﬁers. ViT [8] demonstrates
+
+the feasibility of building Transformer-based image classiﬁers from scratch, but its performance on ImageNet [26] is not achieved without including additional training data; DeiT [34] attains results comparable to convolution-based classiﬁers by using an effective training strategy together with model distillation, removing the data requirement in [8]. Both ViT [8] and DeiT [34] are however based on a single image grid of ﬁxed patch size.
+The development of our co-scale conv-attentional transformers (CoaT) is motivated by two observations: (1) multiscale modeling typically brings enhanced capability to representation learning [10, 25, 37]; (2) the intrinsic connection between relative position encoding and convolution makes it possible to carry out efﬁcient self-attention using conv-like operations. As a consequence, the superior performance of the CoaT classiﬁer shown in the experiments comes from two of our new designs in Transformers: (1) a co-scale mechanism that allows cross-layer attention; (2) a conv-attention module to realize an efﬁcient self-attention operation. Next, we highlight the differences of the two proposed modules with the standard operations and concepts.
+• Co-Scale vs. Multi-Scale. Multi-scale approaches have a long history in computer vision [40, 21]. Convolutional neural networks [16, 15, 10] naturally implement a ﬁne-to-coarse strategy. U-Net [25] enforces an extra coarse-to-ﬁne route in addition to the standard ﬁne-to-coarse path; HRNet [37] provides a further enhanced modeling capability by keeping simultaneous ﬁne and coarse scales throughout the convolution layers. In a parallel development [38] to ours, layers of different scales are in tandem for the image Transformers but [38] merely carries out a ﬁne-to-coarse strategy. The co-scale mechanism proposed here differs from the existing methods in how the responses are computed and interact with each other: CoaT consists of a series of highly modularized serial and parallel blocks to enable ﬁne-to-coarse, coarse-to-ﬁne, and cross-scale attention on tokenized representations. The joint attention mechanism across different scales in our co-scale module provides enhanced modeling power beyond the standard linear fusion in existing multi-scale approaches [10, 25, 37].
+• Conv-Attention vs. Attention. Pure attention-based models [24, 13, 50, 8, 34] have been introduced to the vision domain. [24, 13, 50] replace convolutions in ResNet-like architecture by self-attention modules for better local and non-local relation modeling. In contrast, [8, 34] directly adapt the Transformer [36] for image recognition. Recently, there have been works [1, 4] enhancing the attention mechanism by introducing convolution. LambdaNets [1] introduces an efﬁcient selfattention alternative for global context modeling and employs a 3-D convolution to realize the relative posi-
+
+2
+
+volutional e Position Encoding
+concat nv ⇥C
+
+…
+…
+
+tion embeddings in local context modeling. CPVT [4] designs 2-D depthwise convolutions as the conditional positional encoding after self-attention. In our convattention: (1) we adopt an efﬁcient factorized attention following [1]; (2) we design a depthwise convolutionbased relative position encoding, and (3) extend it to be an alternative case in convolutional position encoding, related to CPVT [4]. Detailed discussion of our network design and its relation with LambdaNets [1] and CPVT [4] can be found in Section 4.1 and 4.2.
+
+3. Revisit Scaled Dot-Product Attention
+Transformers take as input a sequence of vector representations (i.e. tokens) x1, ..., xN , or equivalently X ∈ RN×C . The self-attention mechanism in Transformers projects each xi into corresponding query, key, and value vectors, using learned linear transformations W Q, W K , and W V ∈ RC×C . Thus, the projection of the whole sequence generates representations Q, K, V ∈ RN×C . In the scaled dot-product attention from original Transformers [36]:
+
+ConvolutioAnatltR(Xelat)iv=e Possoitfitomn EanxcodQin√gK
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+C
+
+V
+
+(1)
+
+The
+
+softmQimagx <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit>
+
+P<latexitsha1_base64="12kkXleLSgTMdECDKCmjbYibHmU=">AAAB6HicbVC7SgNBFL0bXzG+4qOzGQyCVdi1UDsDFlomYB6QBJmd3E3GzM4uM7NCXPIFNhaK2PoBVn6JnaV/4uRRaOKBC4dzzuU+/FhwbVz3y8ksLC4tr2RXc2vrG5tb+e2dmo4SxbDKIhGphk81Ci6xargR2IgV0tAXWPf7FyO/fodK80hem0GM7ZB2JQ84o8ZKlfJNvuAW3THIPPGmpHD+cf99+b6X2vxnqxOxJERpmKBaNz03Nu2UKsOZwGGulWiMKevTLjYtlTRE3U7Hiw7JoVU6JIiULWnIWP3dkdJQ60Ho22RITU/PeiPxP6+ZmOCsnXIZJwYlmwwKEkFMREZXkw5XyIwYWEKZ4nZXwnpUUWbsb3L2Cd7syfOkdlz0TopexS2UXJggC/twAEfgwSmU4ArKUAUGCA/wBM/OrfPovDivk2jGmfbswh84bz/KCJCW</latexit>
+outputs
+
+can
+
+<latexit sha1_base64="q8NZ5bgOf7WwavqP5IGTEcO0Ll8=">AAAB9XicbVC5TgMxEPVyhnCFo6OxiJCool0KoCMSBZRBIoeUbCKv4yRWbO/KngXCav+DhgKEKKHhS+go+ROco4CEJ4309N6MZuYFkeAGXPfLmZtfWFxazqxkV9fWNzZzW9sVE8aasjINRahrATFMcMXKwEGwWqQZkYFg1aB/PvSrN0wbHqprGETMl6SreIdTAlZqVppJA9gdJFx207SVy7sFdwQ8S7wJyZ993H9fvO0mpVbus9EOaSyZAiqIMXXPjcBPiAZOBUuzjdiwiNA+6bK6pYpIZvxkdHWKD6zSxp1Q21KAR+rviYRIYwYysJ2SQM9Me0PxP68eQ+fUT7iKYmCKjhd1YoEhxMMIcJtrRkEMLCFUc3srpj2iCQUbVNaG4E2/PEsqRwXvuOBdufmii8bIoD20jw6Rh05QEV2iEiojijR6QE/o2bl1Hp0X53XcOudMZnbQHzjvP3Illso=</latexit>
+beV
+
+simeg en
+
+as
+
+an
+
+attention
+
+map
+
+from
+
+queries to keys. Note that we hide the batch size B and
+
+the
+
+number
+
+of⇥attentio⇥n <latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+<latexit sha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+heads
+
+H
+
+in the actual multi-head
+
+self-attention Q i m g <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit>
+
+[36]
+
+Pfor <latexitsha1_base64="12kkXleLSgTMdECDKCmjbYibHmU=">AAAB6HicbVC7SgNBFL0bXzG+4qOzGQyCVdi1UDsDFlomYB6QBJmd3E3GzM4uM7NCXPIFNhaK2PoBVn6JnaV/4uRRaOKBC4dzzuU+/FhwbVz3y8ksLC4tr2RXc2vrG5tb+e2dmo4SxbDKIhGphk81Ci6xargR2IgV0tAXWPf7FyO/fodK80hem0GM7ZB2JQ84o8ZKlfJNvuAW3THIPPGmpHD+cf99+b6X2vxnqxOxJERpmKBaNz03Nu2UKsOZwGGulWiMKevTLjYtlTRE3U7Hiw7JoVU6JIiULWnIWP3dkdJQ60Ho22RITU/PeiPxP6+ZmOCsnXIZJwYlmwwKEkFMREZXkw5XyIwYWEKZ4nZXwnpUUWbsb3L2Cd7syfOkdlz0TopexS2UXJggC/twAEfgwSmU4ArKUAUGCA/wBM/OrfPovDivk2jGmfbswh84bz/KCJCW</latexit>
+
+simpliﬁed
+
+<latexit sha1_base64="q8NZ5bgOf7WwavqP5IGTEcO0Ll8=">AAAB9XicbVC5TgMxEPVyhnCFo6OxiJCool0KoCMSBZRBIoeUbCKv4yRWbO/KngXCav+DhgKEKKHhS+go+ROco4CEJ4309N6MZuYFkeAGXPfLmZtfWFxazqxkV9fWNzZzW9sVE8aasjINRahrATFMcMXKwEGwWqQZkYFg1aB/PvSrN0wbHqprGETMl6SreIdTAlZqVppJA9gdJFx207SVy7sFdwQ8S7wJyZ993H9fvO0mpVbus9EOaSyZAiqIMXXPjcBPiAZOBUuzjdiwiNA+6bK6pYpIZvxkdHWKD6zSxp1Q21KAR+rviYRIYwYysJ2SQM9Me0PxP68eQ+fUT7iKYmCKjhd1YoEhxMMIcJtrRkEMLCFUc3srpj2iCQUbVNaG4E2/PEsqRwXvuOBdufmii8bIoD20jw6Rh05QEV2iEiojijR6QE/o2bl1Hp0X53XcOudMZnbQHzjvP3Illso=</latexit>
+V
+
+img
+
+derivation.
+
+Self-attention
+
+outputs
+
+are
+
+then
+
+passed
+
+through
+
+a
+
+linear
+
+layer
+
+<latexit sha1_base64="Kk581vKii6sNAjwOjTO0Dq5wlPA=">AAAB73icbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GNBBI8V7Ae0oWy2m3bpZpPuToQS+ie8eFDEq3/Hm//GbZuDtj4YeLw3w8y8IJHCoOt+O4W19Y3NreJ2aWd3b/+gfHjUNHGqGW+wWMa6HVDDpVC8gQIlbyea0yiQvBWMbmd+64lrI2L1iJOE+xEdKBEKRtFK7e6QYnbXnPbKFbfqzkFWiZeTCuSo98pf3X7M0ogrZJIa0/HcBP2MahRM8mmpmxqeUDaiA96xVNGIGz+b3zslZ1bpkzDWthSSufp7IqORMZMosJ0RxaFZ9mbif14nxfDGz4RKUuSKLRaFqSQYk9nzpC80ZygnllCmhb2VsCHVlKGNqGRD8JZfXiXNi6p3VfUeLis1N4+jCCdwCufgwTXU4B7q0AAGEp7hFd6csfPivDsfi9aCk88cwx84nz8JUY/q</latexit>
+
+EaˆVnd
+
+a
+
+simple
+
+feed-forward network, with residual connections and layer-
+
+norm
+
+applied
+
+b⇥efore <latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+an⇥d<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+after
+
+the
+
+feed-forward
+
+network.
+
+torsInisvifsoQiorimmng turlaantesfdoPrbmyetrhs e[8c,Voi3mng4c]a, ttehneaitniopnut osfeqauecnlacses otfovkeecn- <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit>
+
+<latexit sha1_base64="12kkXleLSgTMdECDKCmjbYibHmU=">AAAB6HicbVC7SgNBFL0bXzG+4qOzGQyCVdi1UDsDFlomYB6QBJmd3E3GzM4uM7NCXPIFNhaK2PoBVn6JnaV/4uRRaOKBC4dzzuU+/FhwbVz3y8ksLC4tr2RXc2vrG5tb+e2dmo4SxbDKIhGphk81Ci6xargR2IgV0tAXWPf7FyO/fodK80hem0GM7ZB2JQ84o8ZKlfJNvuAW3THIPPGmpHD+cf99+b6X2vxnqxOxJERpmKBaNz03Nu2UKsOZwGGulWiMKevTLjYtlTRE3U7Hiw7JoVU6JIiULWnIWP3dkdJQ60Ho22RITU/PeiPxP6+ZmOCsnXIZJwYlmwwKEkFMREZXkw5XyIwYWEKZ4nZXwnpUUWbsb3L2Cd7syfOkdlz0TopexS2UXJggC/twAEfgwSmU4ArKUAUGCA/wBM/OrfPovDivk2jGmfbswh84bz/KCJCW</latexit>
+
+<latexit sha1_base64="q8NZ5bgOf7WwavqP5IGTEcO0Ll8=">AAAB9XicbVC5TgMxEPVyhnCFo6OxiJCool0KoCMSBZRBIoeUbCKv4yRWbO/KngXCav+DhgKEKKHhS+go+ROco4CEJ4309N6MZuYFkeAGXPfLmZtfWFxazqxkV9fWNzZzW9sVE8aasjINRahrATFMcMXKwEGwWqQZkYFg1aB/PvSrN0wbHqprGETMl6SreIdTAlZqVppJA9gdJFx207SVy7sFdwQ8S7wJyZ993H9fvO0mpVbus9EOaSyZAiqIMXXPjcBPiAZOBUuzjdiwiNA+6bK6pYpIZvxkdHWKD6zSxp1Q21KAR+rviYRIYwYysJ2SQM9Me0PxP68eQ+fUT7iKYmCKjhd1YoEhxMMIcJtrRkEMLCFUc3srpj2iCQUbVNaG4E2/PEsqRwXvuOBdufmii8bIoD20jw6Rh05QEV2iEiojijR6QE/o2bl1Hp0X53XcOudMZnbQHzjvP3Illso=</latexit>
+
+CLS and the ﬂattened feature vectors x1, ..., xHW as image tokens from the feature maps F ∈ RH×W ×C , for a total
+length of N = HW + 1. Due to the high dimensions of
+
+natural images in pixels (i.e. N C), we cannot afford
+
+the computation of applying the self-attention with high
+
+resolution because the softmax logits in Equation 1 have O(N 2) space complexity and O(N 2C) time complexity for
+
+the whole sequence. To tackle this computation issue, [8, 34]
+
+tokenize the image by patches instead of pixels to reduce
+
+the length of sequence. However, the coarse splitting (e.g. 16×16 patches) limits the capability of the model to repre-
+
+sent details within each patch, which is essential in many
+
+vision tasks. To address this dilemma between computation
+
+and representation capability, we propose a co-scale mecha-
+
+nism that can enable interaction between different scales to
+
+produce a rich representation, with the help of an efﬁcient
+
+conv-attentional mechanism that lowers the computation
+
+complexity for high-resolution feature maps.
+
+Factorized Attention
+
+Output Feature Map
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+C<latexitsha1_base64="ptFsCPtc2X6bc7IQTNlxKtjTw1c=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lEqsdCLx4r2A9sQ9lsN+3SzSbsToQS+i+8eFDEq//Gm//GbZuDtj4YeLw3w8y8IJHCoOt+O4WNza3tneJuaW//4PCofHzSNnGqGW+xWMa6G1DDpVC8hQIl7yaa0yiQvBNMGnO/88S1EbF6wGnC/YiOlAgFo2ilxwbpo4i4IY1BueJW3QXIOvFyUoEczUH5qz+MWRpxhUxSY3qem6CfUY2CST4r9VPDE8omdMR7lipq1/jZ4uIZubDKkISxtqWQLNTfExmNjJlGge2MKI7NqjcX//N6KYa3fiZUkiJXbLkoTCXBmMzfJ0OhOUM5tYQyLeythI2ppgxtSCUbgrf68jppX1W9WtW7v67U3TyOIpzBOVyCBzdQhztoQgsYKHiGV3hzjPPivDsfy9aCk8+cwh84nz97KpAW</latexit>
+
+⇥C
+
+Convolutional Relative Position
+Encoding
+
+Softmax
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+Depthwise Conv*
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+Q
+
+<latexit sha1_base64="6jD5Hw2TX91vjBX4cGtTP5U08xg=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPdZJD0XEDbnrlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHi9aQIQ==</latexit>
+
+C
+
+⇥N
+
+K
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+V
+
+Convolutional Position Encoding
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+Depthwise Conv*
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+concat
+
+reshape
+
+Depthwise Conv
+
+H<latexitsha1_base64="gCWcveOpRcv7c4laoKcpyWoAeYU=">AAAB+nicbVC7TsMwFHV4tZRXCiOLRYXEVCUMwEalLhVTkehDaqPKcZ3WquNE9g1VFfonsDCAECtfwsY3sLOC+xig5UiWj865V/fe48eCa3CcD2tldW19I5PdzG1t7+zu2fn9uo4SRVmNRiJSTZ9oJrhkNeAgWDNWjIS+YA1/UJ74jVumNI/kDYxi5oWkJ3nAKQEjdex8pQ08ZBo35n+5YxecojMFXibunBQuv+6/PzNXw2rHfm93I5qETAIVROuW68TgpUQBp4KNc+1Es5jQAemxlqGSmDFeOl19jI+N0sVBpMyTgKfq746UhFqPQt9UhgT6etGbiP95rQSCCy/lMk6ASTobFCQCQ4QnOeAuV4yCGBlCqOJmV0z7RBEKJq2cCcFdPHmZ1E+L7lnRvXYKJQfNkEWH6AidIBedoxKqoCqqIYqG6AE9oWfrznq0XqzXWemKNe85QH9gvf0Af/mX5g==</latexit>
+
+⇥W
+
+⇥C
+
+reshape
+
+<latexit sha1_base64="5ewkXw24Xj/axQ4aqODOZAF40uU=">AAAB8XicbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GOhF09SwX5gG8pmu2mXbjZhdyKU0H/hxYMiXv033vw3btsctPXBwOO9GWbmBYkUBl332ymsrW9sbhW3Szu7e/sH5cOjlolTzXiTxTLWnYAaLoXiTRQoeSfRnEaB5O1gXJ/57SeujYjVA04S7kd0qEQoGEUrPd6RHoqIG1Lvlytu1Z2DrBIvJxXI0eiXv3qDmKURV8gkNabruQn6GdUomOTTUi81PKFsTIe8a6mido2fzS+ekjOrDEgYa1sKyVz9PZHRyJhJFNjOiOLILHsz8T+vm2J442dCJSlyxRaLwlQSjMnsfTIQmjOUE0so08LeStiIasrQhlSyIXjLL6+S1kXVu6p695eVmpvHUYQTOIVz8OAaanALDWgCAwXP8ApvjnFenHfnY9FacPKZY/gD5/MHjDmQIQ==</latexit>
+
+N
+
+⇥C
+
+Input Feature Map
+
+Figure 2. Illustration of the conv-attentional module. We apply a convolutional position encoding on the image tokens from the input. The resulting features are fed into a factorized attention with a convolutional relative position encoding.
+
+Convolutional Relative Position Encoding
+
+Q i m g <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit>
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+P<latexitsha1_base64="12kkXleLSgTMdECDKCmjbYibHmU=">AAAB6HicbVC7SgNBFL0bXzG+4qOzGQyCVdi1UDsDFlomYB6QBJmd3E3GzM4uM7NCXPIFNhaK2PoBVn6JnaV/4uRRaOKBC4dzzuU+/FhwbVz3y8ksLC4tr2RXc2vrG5tb+e2dmo4SxbDKIhGphk81Ci6xargR2IgV0tAXWPf7FyO/fodK80hem0GM7ZB2JQ84o8ZKlfJNvuAW3THIPPGmpHD+cf99+b6X2vxnqxOxJERpmKBaNz03Nu2UKsOZwGGulWiMKevTLjYtlTRE3U7Hiw7JoVU6JIiULWnIWP3dkdJQ60Ho22RITU/PeiPxP6+ZmOCsnXIZJwYlmwwKEkFMREZXkw5XyIwYWEKZ4nZXwnpUUWbsb3L2Cd7syfOkdlz0TopexS2UXJggC/twAEfgwSmU4ArKUAUGCA/wBM/OrfPovDivk2jGmfbswh84bz/KCJCW</latexit>
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+<latexit sha1_base64="q8NZ5bgOf7WwavqP5IGTEcO0Ll8=">AAAB9XicbVC5TgMxEPVyhnCFo6OxiJCool0KoCMSBZRBIoeUbCKv4yRWbO/KngXCav+DhgKEKKHhS+go+ROco4CEJ4309N6MZuYFkeAGXPfLmZtfWFxazqxkV9fWNzZzW9sVE8aasjINRahrATFMcMXKwEGwWqQZkYFg1aB/PvSrN0wbHqprGETMl6SreIdTAlZqVppJA9gdJFx207SVy7sFdwQ8S7wJyZ993H9fvO0mpVbus9EOaSyZAiqIMXXPjcBPiAZOBUuzjdiwiNA+6bK6pYpIZvxkdHWKD6zSxp1Q21KAR+rviYRIYwYysJ2SQM9Me0PxP68eQ+fUT7iKYmCKjhd1YoEhxMMIcJtrRkEMLCFUc3srpj2iCQUbVNaG4E2/PEsqRwXvuOBdufmii8bIoD20jw6Rh05QEV2iEiojijR6QE/o2bl1Hp0X53XcOudMZnbQHzjvP3Illso=</latexit>
+V
+
+img
+
+Q i m g <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit>
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+P<latexitsha1_base64="12kkXleLSgTMdECDKCmjbYibHmU=">AAAB6HicbVC7SgNBFL0bXzG+4qOzGQyCVdi1UDsDFlomYB6QBJmd3E3GzM4uM7NCXPIFNhaK2PoBVn6JnaV/4uRRaOKBC4dzzuU+/FhwbVz3y8ksLC4tr2RXc2vrG5tb+e2dmo4SxbDKIhGphk81Ci6xargR2IgV0tAXWPf7FyO/fodK80hem0GM7ZB2JQ84o8ZKlfJNvuAW3THIPPGmpHD+cf99+b6X2vxnqxOxJERpmKBaNz03Nu2UKsOZwGGulWiMKevTLjYtlTRE3U7Hiw7JoVU6JIiULWnIWP3dkdJQ60Ho22RITU/PeiPxP6+ZmOCsnXIZJwYlmwwKEkFMREZXkw5XyIwYWEKZ4nZXwnpUUWbsb3L2Cd7syfOkdlz0TopexS2UXJggC/twAEfgwSmU4ArKUAUGCA/wBM/OrfPovDivk2jGmfbswh84bz/KCJCW</latexit>
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+<latexit sha1_base64="q8NZ5bgOf7WwavqP5IGTEcO0Ll8=">AAAB9XicbVC5TgMxEPVyhnCFo6OxiJCool0KoCMSBZRBIoeUbCKv4yRWbO/KngXCav+DhgKEKKHhS+go+ROco4CEJ4309N6MZuYFkeAGXPfLmZtfWFxazqxkV9fWNzZzW9sVE8aasjINRahrATFMcMXKwEGwWqQZkYFg1aB/PvSrN0wbHqprGETMl6SreIdTAlZqVppJA9gdJFx207SVy7sFdwQ8S7wJyZ993H9fvO0mpVbus9EOaSyZAiqIMXXPjcBPiAZOBUuzjdiwiNA+6bK6pYpIZvxkdHWKD6zSxp1Q21KAR+rviYRIYwYysJ2SQM9Me0PxP68eQ+fUT7iKYmCKjhd1YoEhxMMIcJtrRkEMLCFUc3srpj2iCQUbVNaG4E2/PEsqRwXvuOBdufmii8bIoD20jw6Rh05QEV2iEiojijR6QE/o2bl1Hp0X53XcOudMZnbQHzjvP3Illso=</latexit>
+V
+
+img
+
+Q i m g <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit>
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+P<latexitsha1_base64="12kkXleLSgTMdECDKCmjbYibHmU=">AAAB6HicbVC7SgNBFL0bXzG+4qOzGQyCVdi1UDsDFlomYB6QBJmd3E3GzM4uM7NCXPIFNhaK2PoBVn6JnaV/4uRRaOKBC4dzzuU+/FhwbVz3y8ksLC4tr2RXc2vrG5tb+e2dmo4SxbDKIhGphk81Ci6xargR2IgV0tAXWPf7FyO/fodK80hem0GM7ZB2JQ84o8ZKlfJNvuAW3THIPPGmpHD+cf99+b6X2vxnqxOxJERpmKBaNz03Nu2UKsOZwGGulWiMKevTLjYtlTRE3U7Hiw7JoVU6JIiULWnIWP3dkdJQ60Ho22RITU/PeiPxP6+ZmOCsnXIZJwYlmwwKEkFMREZXkw5XyIwYWEKZ4nZXwnpUUWbsb3L2Cd7syfOkdlz0TopexS2UXJggC/twAEfgwSmU4ArKUAUGCA/wBM/OrfPovDivk2jGmfbswh84bz/KCJCW</latexit>
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+<latexit sha1_base64="q8NZ5bgOf7WwavqP5IGTEcO0Ll8=">AAAB9XicbVC5TgMxEPVyhnCFo6OxiJCool0KoCMSBZRBIoeUbCKv4yRWbO/KngXCav+DhgKEKKHhS+go+ROco4CEJ4309N6MZuYFkeAGXPfLmZtfWFxazqxkV9fWNzZzW9sVE8aasjINRahrATFMcMXKwEGwWqQZkYFg1aB/PvSrN0wbHqprGETMl6SreIdTAlZqVppJA9gdJFx207SVy7sFdwQ8S7wJyZ993H9fvO0mpVbus9EOaSyZAiqIMXXPjcBPiAZOBUuzjdiwiNA+6bK6pYpIZvxkdHWKD6zSxp1Q21KAR+rviYRIYwYysJ2SQM9Me0PxP68eQ+fUT7iKYmCKjhd1YoEhxMMIcJtrRkEMLCFUc3srpj2iCQUbVNaG4E2/PEsqRwXvuOBdufmii8bIoD20jw6Rh05QEV2iEiojijR6QE/o2bl1Hp0X53XcOudMZnbQHzjvP3Illso=</latexit>
+V
+
+img
+
+<latexit sha1_base64="Kk581vKii6sNAjwOjTO0Dq5wlPA=">AAAB73icbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GNBBI8V7Ae0oWy2m3bpZpPuToQS+ie8eFDEq3/Hm//GbZuDtj4YeLw3w8y8IJHCoOt+O4W19Y3NreJ2aWd3b/+gfHjUNHGqGW+wWMa6HVDDpVC8gQIlbyea0yiQvBWMbmd+64lrI2L1iJOE+xEdKBEKRtFK7e6QYnbXnPbKFbfqzkFWiZeTCuSo98pf3X7M0ogrZJIa0/HcBP2MahRM8mmpmxqeUDaiA96xVNGIGz+b3zslZ1bpkzDWthSSufp7IqORMZMosJ0RxaFZ9mbif14nxfDGz4RKUuSKLRaFqSQYk9nzpC80ZygnllCmhb2VsCHVlKGNqGRD8JZfXiXNi6p3VfUeLis1N4+jCCdwCufgwTXU4B7q0AAGEp7hFd6csfPivDsfi9aCk88cwx84nz8JUY/q</latexit>
+EˆV
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+Q i m g <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit>
+
+*
+
+P<latexitsha1_base64="12kkXleLSgTMdECDKCmjbYibHmU=">AAAB6HicbVC7SgNBFL0bXzG+4qOzGQyCVdi1UDsDFlomYB6QBJmd3E3GzM4uM7NCXPIFNhaK2PoBVn6JnaV/4uRRaOKBC4dzzuU+/FhwbVz3y8ksLC4tr2RXc2vrG5tb+e2dmo4SxbDKIhGphk81Ci6xargR2IgV0tAXWPf7FyO/fodK80hem0GM7ZB2JQ84o8ZKlfJNvuAW3THIPPGmpHD+cf99+b6X2vxnqxOxJERpmKBaNz03Nu2UKsOZwGGulWiMKevTLjYtlTRE3U7Hiw7JoVU6JIiULWnIWP3dkdJQ60Ho22RITU/PeiPxP6+ZmOCsnXIZJwYlmwwKEkFMREZXkw5XyIwYWEKZ4nZXwnpUUWbsb3L2Cd7syfOkdlz0TopexS2UXJggC/twAEfgwSmU4ArKUAUGCA/wBM/OrfPovDivk2jGmfbswh84bz/KCJCW</latexit>
+
+<latexit sha1_base64="q8NZ5bgOf7WwavqP5IGTEcO0Ll8=">AAAB9XicbVC5TgMxEPVyhnCFo6OxiJCool0KoCMSBZRBIoeUbCKv4yRWbO/KngXCav+DhgKEKKHhS+go+ROco4CEJ4309N6MZuYFkeAGXPfLmZtfWFxazqxkV9fWNzZzW9sVE8aasjINRahrATFMcMXKwEGwWqQZkYFg1aB/PvSrN0wbHqprGETMl6SreIdTAlZqVppJA9gdJFx207SVy7sFdwQ8S7wJyZ993H9fvO0mpVbus9EOaSyZAiqIMXXPjcBPiAZOBUuzjdiwiNA+6bK6pYpIZvxkdHWKD6zSxp1Q21KAR+rviYRIYwYysJ2SQM9Me0PxP68eQ+fUT7iKYmCKjhd1YoEhxMMIcJtrRkEMLCFUc3srpj2iCQUbVNaG4E2/PEsqRwXvuOBdufmii8bIoD20jw6Rh05QEV2iEiojijR6QE/o2bl1Hp0X53XcOudMZnbQHzjvP3Illso=</latexit>
+V
+
+img
+
+⇥<latexitsha1_base64="MKq8PXcJJiL/m/XT3LLhDVvOKjw=">AAAB7XicbVDLSgNBEOz1GeMr6tHLYBA8hV0R9Rj04jGCeUCyhNnJbDJmdmaZ6RVCyD948aCIV//Hm3/jJNmDJhY0FFXddHdFqRQWff/bW1ldW9/YLGwVt3d29/ZLB4cNqzPDeJ1pqU0ropZLoXgdBUreSg2nSSR5MxreTv3mEzdWaPWAo5SHCe0rEQtG0UmNDoqE226p7Ff8GcgyCXJShhy1bumr09MsS7hCJqm17cBPMRxTg4JJPil2MstTyoa0z9uOKuqWhOPZtRNy6pQeibVxpZDM1N8TY5pYO0oi15lQHNhFbyr+57UzjK/DsVBphlyx+aI4kwQ1mb5OesJwhnLkCGVGuFsJG1BDGbqAii6EYPHlZdI4rwSXleD+oly9yeMowDGcwBkEcAVVuIMa1IHBIzzDK7x52nvx3r2PeeuKl88cwR94nz+4I486</latexit>
+
+Multiplication
+
+Sum
+
+<latexit sha1_base64="Kk581vKii6sNAjwOjTO0Dq5wlPA=">AAAB73icbVBNS8NAEJ3Ur1q/qh69LBbBU0lE1GNBBI8V7Ae0oWy2m3bpZpPuToQS+ie8eFDEq3/Hm//GbZuDtj4YeLw3w8y8IJHCoOt+O4W19Y3NreJ2aWd3b/+gfHjUNHGqGW+wWMa6HVDDpVC8gQIlbyea0yiQvBWMbmd+64lrI2L1iJOE+xEdKBEKRtFK7e6QYnbXnPbKFbfqzkFWiZeTCuSo98pf3X7M0ogrZJIa0/HcBP2MahRM8mmpmxqeUDaiA96xVNGIGz+b3zslZ1bpkzDWthSSufp7IqORMZMosJ0RxaFZ9mbif14nxfDGz4RKUuSKLRaFqSQYk9nzpC80ZygnllCmhb2VsCHVlKGNqGRD8JZfXiXNi6p3VfUeLis1N4+jCCdwCufgwTXU4B7q0AAGEp7hFd6csfPivDsfi9aCk88cwx84nz8JUY/q</latexit>
+EˆV
+* Convolution
+
+Figure 3. Illustration of the convolutional relative position encoding. (Upper) Each query (orange), value (green) and the corresponding relative position encoding (gray) are multiplied together, where the sum of the resulting products leads to the output (blue) in EˆV . (Lower) The equivalent form to generate the output, which is the product of the query and the convolution between the position encoding map and value tokens.
+
+4. Conv-Attention Module
+4.1. Factorized Attention Mechanism
+In Equation 1, the materialization of the softmax logits and attention maps leads to the O(N 2) space complexity
+
+3
+
+Convol Q i m g <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit> Q i m g <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit> Q i m g <latexitsha1_base64="boTMl6NO5OSwzJIJRP1dMHzPyuI=">AAAB9XicbVC7SgNBFJ31mcRX1NJmMAgWEnYt1DJgY5mAeUCyCbOzs8mQ2dll5q4alm1s/AUbC0XsxH+x82t08ig08cCFwzn3cu89Xiy4Btv+spaWV1bX1nP5wsbm1vZOcXevoaNEUVankYhUyyOaCS5ZHTgI1ooVI6EnWNMbXo795g1TmkfyGkYxc0PSlzzglICRurVu2gF2BykP+1nWK5bssj0BXiTOjJQq+Qf//fv+pNorfnb8iCYhk0AF0brt2DG4KVHAqWBZoZNoFhM6JH3WNlSSkGk3nVyd4SOj+DiIlCkJeKL+nkhJqPUo9ExnSGCg572x+J/XTiC4cFMu4wSYpNNFQSIwRHgcAfa5YhTEyBBCFTe3YjogilAwQRVMCM78y4ukcVp2zspOzaRhoyly6AAdomPkoHNUQVeoiuqIIoUe0TN6sW6tJ+vVepu2LlmzmX30B9bHDwxQloE=</latexit>
+
+<latexit sha1_base64="0pjc2PBKzPC4TJvj2h7g5hSLQ7Q=">AAACFHicbZDLSsNAFIZP6q3WW9Slm8EiCEJJalGXhW66rGAv0IQymU7aoZMLMxOhhDyEG1/FjQtF3Lpw59s4bbOwrT8M/HznHM6c34s5k8qyfozCxubW9k5xt7S3f3B4ZB6fdGSUCELbJOKR6HlYUs5C2lZMcdqLBcWBx2nXmzRm9e4jFZJF4YOaxtQN8ChkPiNYaTQwrxxfYJI2s/S6miFHsYBKtGDdJdYY1AZm2apYc6F1Y+emDLlaA/PbGUYkCWioCMdS9m0rVm6KhWKE06zkJJLGmEzwiPa1DbFe5KbzozJ0ockQ+ZHQL1RoTv9OpDiQchp4ujPAaixXazP4X62fKP/OTVkYJ4qGZLHITzhSEZolhIZMUKL4VBtMBNN/RWSMdSJK51jSIdirJ6+bTrVi31Ts+1q5buVxFOEMzuESbLiFOjShBW0g8AQv8AbvxrPxanwYn4vWgpHPnMKSjK9fnQad2A==</latexit>
+
+H
+
+32
+
+⇥
+
+W 32
+
+⇥ C4
+
+1000-class logits Linear
+
+<latexit sha1_base64="fgcMoFPb51ekf9JsummRAdICe20=">AAACG3icbZDLSsNAFIYn9VbrLerSzWApuCpJleqy0E2XFewF2hAm00k7dHJh5kQoIe/hxldx40IRV4IL38Zpm4Vt/WHg5zvncOb8Xiy4Asv6MQpb2zu7e8X90sHh0fGJeXrWVVEiKevQSESy7xHFBA9ZBzgI1o8lI4EnWM+bNuf13iOTikfhA8xi5gRkHHKfUwIauWZt6EtC01aW2vUMD4EHTOEl662wpnuNK9iux+CaZatqLYQ3jZ2bMsrVds2v4SiiScBCoIIoNbCtGJyUSOBUsKw0TBSLCZ2SMRtoGxK9z0kXt2W4oskI+5HULwS8oH8nUhIoNQs83RkQmKj12hz+Vxsk4N85KQ/jBFhIl4v8RGCI8DwoPOKSURAzbQiVXP8V0wnRwYCOs6RDsNdP3jTdWtWuV+37m3LDyuMoogt0ia6QjW5RA7VQG3UQRU/oBb2hd+PZeDU+jM9la8HIZ87RiozvX6a3n9E=</latexit>
+
+H
+
+16
+
+⇥
+
+W 16
+
+⇥ C3
+
+Serial Block Image and Class Tokens
+
+<latexit sha1_base64="jgOVPjMcP+lPLkx1/nbPKAXmJP4=">AAACGXicbZDLSsNAFIYn9VbrLerSzWApuCpJkdploZsuK9gLtCFMppN26OTCzIlQQl7Dja/ixoUiLnXl2zhts6itPwz8fOcczpzfiwVXYFk/RmFnd2//oHhYOjo+OT0zzy96KkokZV0aiUgOPKKY4CHrAgfBBrFkJPAE63uz1qLef2RS8Sh8gHnMnIBMQu5zSkAj17RGviQ0bWdpI8Mj4AFTeIX666jl1nAF2/UYXLNsVa2l8Laxc1NGuTqu+TUaRzQJWAhUEKWGthWDkxIJnAqWlUaJYjGhMzJhQ21Dovc56fKyDFc0GWM/kvqFgJd0fSIlgVLzwNOdAYGp2qwt4H+1YQJ+w0l5GCfAQrpa5CcCQ4QXMeExl4yCmGtDqOT6r5hOic4FdJglHYK9efK26dWqdr1q39+Wm1YeRxFdoWt0g2x0h5qojTqoiyh6Qi/oDb0bz8ar8WF8rloLRj5zif7I+P4Fsj6fXg==</latexit>
+
+H
+
+8
+
+⇥
+
+W 8
+
+⇥ C2
+
+Serial Block
+
+Serial Block
+
+<latexit sha1_base64="9w4/MZFPtW0OPOnUYpZsZXC0PFo=">AAACGXicbZDLSsNAFIYn9VbrLerSzWApuCqJSHVZ6KbLCvYCTQiT6aQdOrkwcyKUkNdw46u4caGIS135Nk7bLGrrDwM/3zmHM+f3E8EVWNaPUdra3tndK+9XDg6Pjk/M07OeilNJWZfGIpYDnygmeMS6wEGwQSIZCX3B+v60Na/3H5lUPI4eYJYwNyTjiAecEtDIMy0nkIRm7Ty7ybEDPGQKL1F/FbU8G9ew3UjAM6tW3VoIbxq7MFVUqOOZX84opmnIIqCCKDW0rQTcjEjgVLC84qSKJYROyZgNtY2I3udmi8tyXNNkhINY6hcBXtDViYyESs1CX3eGBCZqvTaH/9WGKQR3bsajJAUW0eWiIBUYYjyPCY+4ZBTETBtCJdd/xXRCdC6gw6zoEOz1kzdN77puN+r2/U21aRVxlNEFukRXyEa3qInaqIO6iKIn9ILe0LvxbLwaH8bnsrVkFDPn6I+M71+jr59V</latexit>
+
+H
+
+4
+
+⇥
+
+W 4
+
+⇥ C1
+
+Serial Block
+
+Serial Block
+
+Parallel Block
+
+…
+
+Parallel Block
+
+Serial Block
+
+Parallel Block
+
+…
+
+Parallel Block
+
+Serial Block Serial Block
+
+Parallel Block Parallel Group
+
+…
+
+Parallel Block Parallel Group
+
+Image and Class Tokens
+
+Linear Concat
+
+1000-class logits
+Serial Block
+
+Input Image
+
+Input Image
+
+Figure 4. CoaT model architecture. (Left) The overall network architecture of CoaT-Lite. CoaT-Lite consists of serial blocks only, where image features are down-sampled and processed in a sequential order. (Right) The overall network architecture of CoaT. CoaT consists of serial blocks and parallel blocks that interact via co-scale attention.
+
+and O(N 2C) time complexity. Inspired by recent works [3, 28, 1] on linearization of self-attention, we approximate the softmax attention map by factorizing it using two functions φ(·), ψ(·(a)) C: oRaTN-L×itCe → RN×C and compute the second matrix multiplication (keys and values) together:
+
+FactorAtt(X) = φ(Q) ψ(K) V
+
+(2)
+
+The factorization leads to a O(N C ) space complexity and O(N C 2) time complexity, where both are linear functions of the sequence length N . Performer [3] uses random projections in φ and ψ for a provable approximation, but with the cost of relatively large C . Efﬁcient-Attention [28] applies the softmax function for both φ and ψ, which is efﬁcient but
+causes a signiﬁcant performance drop on the vision tasks in
+our experiments. Here, we develop our factorized attention mechanism following LambdaNets [1] with φ as the identity function and ψ as the softmax:
+
+FactorAtt(X) = √Q softmax(K) V
+
+(3)
+
+C
+
+where softmax(·) is applied across the tokens in the sequence in an element-wise manner and the projected channels C = C. Differe√nt from LambdaNets [1], we also add the scaling factor 1/ C back in due to its normalizing effect, bringing better performance. This factorized attention takes O(N C) space complexity and O(N C2) time complexity. It is noteworthy that the proposed factorized attention following [1] is not a direct approximation of the scaled dotproduct attention, but it can still be regarded as a generalized attention mechanism modeling the feature interactions using query, key and value vectors.
+
+4.2. Convolution as Position Encoding
+
+Our factorized attention module mitigates the compPuar-allel Block
+
+tational b(ubr)dCeonaTfrom the original scaled dot-product atten-
+
+tion. However, because we compute L = softmax(K) V ∈ RC×C ﬁrst, L can be seen as a global data-dependent linePaarrallel Block
+
+transformation for every feature vector in the query map Q. This indicates if we have two query vectors q1, q2 ∈ RC from Q and q1 = q2, then their corresponding self-attentiPoanrallel Block
+
+outputs will be the same:
+
+FactorAtt(X )1
+
+=
+
+√q1 L C
+
+=
+
+√q2 L C
+
+=
+
+FactorAtt(X )2
+
+Parallel Group
+(4)
+
+Without the position encoding, the Transformer is only composed of linear layers and self-attention modules. Thus, the output of a token is dependent on the corresponding input without awareness of any difference in its locally nearby features. This property is unfavorable for vision tasks such as semantic segmentation (e.g. the same blue patches in the sky and the sea are segmented as the same category).
+
+Convolutional Relative Position Encoding. To enable vi-
+
+sion tasks, ViT and DeiT [8, 34] insert absolute position
+
+embeddings into the input, which may have limitations in
+
+modeling the relative relations between local tokens. Instead,
+
+following [27], we can integrate a relative position encoding
+
+P
+
+=
+
+{pi, i
+
+=
+
+−
+
+M −1 2
+
+,
+
+...,
+
+M −1 2
+
+}
+
+with
+
+window
+
+size
+
+M
+
+to
+
+obtain the relative attention map EV ∈ RN×C in attention
+
+formulation if tokens are regarded as a 1-D sequence:
+
+RelFactorAtt(X) = √Q softmax(K) V + EV (5) C
+where the encoding matrix E ∈ RN×N has elements:
+
+Eij = 1(i, j)qi · pj−i, 1 ≤ i, j ≤ N
+
+(6)
+
+4
+
+Parallel Block
+Parallel Block
+Parallel Block Parallel Group
+
+in which 1(i, j) = 1{|j−i|≤(M−1)/2}(i, j) is an indicator
+
+fquunecr…ytioqni.
+
+Each element Eij represents the relation from to thPearavlleal lBuloeckvj within window M , and (EV )i
+
+aggregates all related value vectors with respective to query
+
+qi. Unfortunately, the EV term still requires O(N 2) space
+
+Linear Concat
+
+… complexity anPdaraOllel(BNloc2kC)
+propose to simplify the EV
+
+time term
+
+complexity. In CoaT, w1e000-class
+
+to EˆV
+
+logits
+by considering each
+
+channel in the query, key and value vectors as internal heads.
+
+… Thus, for each internal head l, we have: Parallel Block
+
+Ei(jl) = 1Pa(ria,llejl )Gqroi(ul)pp(jl−) i,ImaEgˆeVan(idl)Cl=ass TokjenEs i(jl)vj(l)
+
+(7)
+
+In practice, we can use a 1-D depthwise convolution to compute EˆV :
+
+Serial Block
+
+Output Feature Maps
+
+Reshape
+Feed-Forward Conv-Attention
+
+To Linear Layer Or Parallel Block
+
+…
+
+Image Tokens
+
+Feed-Forward Conv-Attention
+Flatten
+
+Class Token
+
+Patch Embed
+
+EˆV (l) = Q(l) ◦ Conv1D(P (l), V (l)),
+
+(8)
+
+EˆV = Q ◦ DepthwiseConv1D(P, V )
+
+(9)
+
+where ◦ is the Hadamard product. It is noteworthy that
+in vision Transformers, we have two types of tokens, the
+class (CLS) token and image tokens. Thus, we use a 2D depthwise convolution (with window size M and kernel P ) and apply it only to the reshaped image tokens (i.e. Qimg, V img ∈ RH×W ×C from Q, V respectively):
+
+Eˆ(Vb)imCgo=aTQimg ◦ DepthwiseConv2D(P, V img) (10)
+
+EˆV = concat(EˆV img, 0)
+
+(11)
+
+ConvAtt(X) = √Q softmax(K) V + EˆV
+
+(12)
+
+C
+
+Based on our derivation, the depthwise convolution can be seen as a special case of relative position encoding. Convolutional Relative Position Encoding vs Other Relative Position Encoding. The commonly referred relative position encoding [27] works in the standard scaled dot-product attention settings since the encoding matrix E is combined with the softmax logits in the attention maps, which are not materialized in our factorized attention. Related to our work, LambdaNets [1] attempts to use a 3-D convolution to compute EV directly, but it costs O(N C2) space complexity and O(N C2M 2) time complexity, which leads to heavy computation when channel size C is large. In contrast, our factorized attention computes EˆV that only takes O(N C) space complexity and O(N CM 2) time complexity, achieving better efﬁciency than LambdaNets.
+Convolutional Position Encoding. We then extend the idea of convolutional relative position encoding to a general convolutional position encoding case. Convolutional relative position encoding models local position-based relationship between queries and values. Similar to the absolute position encoding used in most image Transformers [8, 34], we would like to insert the position relationship into the input
+
+Input Feature Maps
+Figure 5. Schematic illustration of the serial block in CoaT. Input feature maps are ﬁrst down-sampled by a patch embedding layer, and then tokenized features (along with a class token) are processed by multiple conv-attention and feed-forward layers.
+
+image features directly to enrich the effects of relative posi-
+
+FFN
+
+Conv-Att
+
+tion encoding. In each conv-attentional module, we insert
+
+ParaalledleBplotchk wise convolution into the input features X and con-
+
+catenate the resulting position-aware features back to the
+
+input features following the standard absolute position en-
+
+FFN
+
+Conv-Att
+
+coding scheme (see Figure 2 lower part), which resembles Partahlleel Brleocaklization of conditional position encoding in CPVT [4].
+
+CoaT and CoaT-Lite share the convolutional position en-
+
+coding weights and convolutional relative position encoding
+
+FFN
+
+Conv-Att
+
+ParwalleeliBglohctks for the serial and parallel modules within the same
+
+scale. We set convolution kernel size to 3 for the convolu-
+
+Partailolenl Garloupposition encoding. We set convolution kernel size to
+
+3, 5 and 7 for image features from different attention heads
+
+for convolutional relative position encoding.
+
+The work of CPVT [4] explores the use of convolution
+
+as conditional position encodings by inserting it after the
+
+feed-forward
+
+network
+
+under
+
+a
+
+single
+
+scale
+
+(
+
+H 16
+
+×
+
+W 16
+
+).
+
+Our
+
+work focuses on applying convolution as relative position
+
+encoding and a general position encoding with factorized
+
+attention in a co-scale setting.
+
+4.3. Conv-Attentional Mechanism
+
+The ﬁnal conv-attentional module is shown in Figure 2: We apply the ﬁrst convolutional position encoding on the image tokens from the input. Then, we feed it into ConvAtt(·) including factorized attention and the convolutional relative position encoding. The resulting map is used for the subsequent feed-forward networks.
+We show an illustration of the proposed convolutional relative position encoding strategy in Figure 3. Each query in the image tokens Qimg seeks all its nearby values within the window from value image tokens V img. The product of
+
+5
+
+FFN
+
+Conv-Att
+
+FFN
+
+Parallel Block
+
+Conv-Att
+
+FFN
+
+Conv-Att Cross-Att Cross-Att
+
+FFN
+
+Conv-Att
+
+FFN
+
+Parallel Block
+
+Conv-Att
+
+FFN
+
+Cross-Att Conv-Att Cross-Att
+
+FFN
+
+Conv-Att
+
+FFN
+
+Parallel Block
+
+Conv-Att
+
+FFN
+
+Cross-Att Cross-Att Conv-Att
+
+Parallel Group
+
+w/o Co-Scale
+
+Co-Scale w/ Direct Cross-Layer Attention
+
+Co-Scale w/ Feature Interpolation
+
+Figure 6. Schematic illustration of the parallel group in CoaT. For “w/o Co-Scale”, tokens learned at the individual scales are combined
+
+to perform the classiﬁcation but absent intermediate co-scale interaction for the individual paths of the parallel blocks. We propose two
+
+“Co-Scale” variants, namely Direct Cross-Layer Attention and Feature Interpolation. Co-Scale with Feature Interpolation is adopted in the
+
+ﬁnal CoaT-Lite and CoaT models reported in the ImageNet benchmark.
+
+the query, each obtained value, and corresponding relative position encoding in P is then summed to output EˆV . To reduce the computation, we consider the relative position encoding map P as a convolutional kernel and convolve it with the value image tokens V img ﬁrst. Then, we multiply the query with the result of convolution and generate the output EˆV . Note that Figure 3 shows a simple case where query, position encoding, and value have a single channel (corresponding to one internal head in Equation 8). For the multi-channel version (corresponding to Equation 9, 10), the multiplication and the convolution in Figure 3 should be replaced by a Hadamard product and a depthwise convolution operation.
+5. Co-Scale Conv-Attentional Transformers
+5.1. Co-Scale Mechanism
+The proposed co-scale mechanism is designed to introduce cross-scale attention to image transformers. Here, we describe two types of co-scale blocks in the CoaT architecture, namely serial and parallel blocks.
+CoaT Serial Block. A serial block (shown in Figure 5) models image representations in a reduced resolution. In a typical serial block, we ﬁrst down-sample input feature maps by a certain ratio using a patch embedding layer (2D convolution layer), and ﬂatten the reduced feature maps into a sequence of image tokens. We then concatenate image tokens with an additional CLS token, a specialized vector to perform image classiﬁcation, and apply multiple convattentional modules as described in Section 4 to learn internal relationships among image tokens and the CLS token. Finally, we separate the CLS token from the image tokens and reshape the image tokens to 2D feature maps for the next serial block.
+CoaT Parallel Block. We realize cross-scale attention between parallel blocks in each parallel group (shown in Figure 6). In a typical parallel group, we have sequences of input
+
+features (image tokens and CLS token) from serial blocks with different scales. To realize ﬁne-to-coarse, coarse-to-ﬁne, and cross-scale attention in the parallel group, we develop two strategies: (1) direct cross-layer attention; (2) attention with feature interpolation. In this paper, we adopt attention with feature interpolation for better empirical performance. The effectiveness of both strategies are shown in Section 6.4. Direct cross-layer attention. In direct cross-layer attention, we form query, key, and value vectors from input features for each scale. For attention within the same layer, we use the conv-attention (Figure 2) with the query, key and value vectors from current scale. For attention across different layers, we down-sample or up-sample the key and value vectors to match the resolution of other scales. We then perform a cross-attention, which extends the conv-attention with query from current scale and key and value from another scale. Finally, we sum outputs of conv-attention and crossattention together and applies a shared feed-forward layer. With direct cross-layer attention, the cross-layer information is fused in a cross-attention fashion. Attention with feature interpolation. Instead of performing cross-layer attention directly, we also present attention with feature interpolation. First, the input image features from different scales are processed by independent conv-attention modules. Then, we down-sample or up-sample image features from each scale to match the other scales’ dimensions using bilinear interpolation or keep the same for its own scale. The features belong to the same scale are summed in the parallel group, and they are further passed into a shared feed-forward layer. In this way, the conv-attentional module in the next step can learn cross-layer information based on the feature interpolation in the current step.
+5.2. Model Architecture
+CoaT-Lite. CoaT-Lite, Figure 4 (Left), processes input images with a series of serial blocks following a ﬁne-to-coarse pyramid structure. Given an input image I ∈ RH×W ×C ,
+
+6
+
+Table 1. Architecture details of CoaT-Lite and CoaT models. Ci represents the hidden dimension of the attention layers in block i; Hi represents the number of attention heads in the attention layers in block i; Ri represents the expansion ratio for the feed-forward hidden layer dimension between attention layers in block i. Multipliers indicate the number of conv-attentional modules in block i.
+
+Blocks
+
+Output
+
+Tiny
+
+CoaT-Lite Mini
+
+Small
+
+CoaT
+
+Tiny
+
+Mini
+
+Serial Block (S1)
+
+56 × 56
+
+ C1 = 64   H1 = 8  × 2
+R1 = 8
+
+ C1 = 64   H1 = 8  × 2
+R1 = 8
+
+ C1 = 64   H1 = 8  × 3
+R1 = 8
+
+ C1 = 152   H1 = 8  × 2
+R1 = 4
+
+ C1 = 152   H1 = 8  × 2
+R1 = 4
+
+Serial Block (S2)
+
+28 × 28
+
+ C2 = 128   H2 = 8  × 2
+R2 = 8
+
+ C2 = 128   H2 = 8  × 2
+R2 = 8
+
+ C2 = 128   H2 = 8  × 4
+R2 = 8
+
+ C2 = 152   H2 = 8  × 2
+R2 = 4
+
+ C2 = 216   H2 = 8  × 2
+R2 = 4
+
+Serial Block (S3)
+
+14 × 14
+
+ C3 = 256   H3 = 8  × 2
+R3 = 4
+
+ C3 = 320   H3 = 8  × 2
+R3 = 4
+
+ C3 = 320   H3 = 8  × 6
+R3 = 4
+
+ C3 = 152   H3 = 8  × 2
+R3 = 4
+
+ C3 = 216   H3 = 8  × 2
+R3 = 4
+
+Serial Block (S4)
+
+7×7
+
+ C4 = 320   H4 = 8  × 2
+R4 = 4
+
+ C4 = 512   H4 = 8  × 2
+R4 = 4
+
+ C4 = 512   H4 = 8  × 3
+R4 = 4
+
+ C4 = 152   H4 = 8  × 2
+R4 = 4
+
+ C4 = 216   H4 = 8  × 2
+R4 = 4
+
+ 28 × 28  Parallel Group  14 × 14 
+7×7
+
+ C4 = 152   H4 = 8  × 6
+R4 = 4
+
+ C4 = 216   H4 = 8  × 6
+R4 = 4
+
+#Params
+
+5.7M
+
+11M
+
+20M
+
+5.5M
+
+10M
+
+each serial block down-samples the image features into lower
+
+resolution, resulting in a sequence of four resolutions:F1 ∈
+
+RH 4
+
+×
+
+W 4
+
+×C1 ,
+
+F2
+
+∈
+
+R , H 8
+
+×
+
+W 8
+
+×C2
+
+F3
+
+∈
+
+R , H 16
+
+×
+
+W 16
+
+×C3
+
+F4
+
+∈
+
+RH 32
+
+×
+
+W 32
+
+×C4 .
+
+In
+
+CoaT-Lite,
+
+we
+
+obtain
+
+the
+
+CLS
+
+token
+
+in
+
+the
+
+last serial block, and perform image classiﬁcation via a linear
+
+projection layer based on the CLS token.
+
+CoaT. Our CoaT model, shown in Figure 4 (Right), consists of both serial and parallel blocks. Once we obtain multi-scale feature maps {F1, F2, F3, F4} from the serial blocks, we pass F2, F3, F4 into the parallel group with three separate parallel blocks. In CoaT, we concatenate the independent CLS tokens for each feature scale, and reduce the channel dimension to perform image classiﬁcation with the same procedure as CoaT-Lite.
+
+Model Variants. In this paper, we explore CoaT and CoaTLite with three different model sizes, namely Tiny, Mini, and Small. Architecture details are shown in Table 1. For example, tiny models represent those with a 5M parameter budget constraint. Speciﬁcally, these tiny models have four serial blocks, each with two conv-attentional modules. In CoaT-Lite Tiny architectures, the hidden dimensions of the attention layers increase for later blocks. CoaT Tiny sets the hidden dimensions of the attention layers in the parallel group to be equal, and performs the co-scale attention within the parallel group for six steps. Mini and small models follow the same architecture design but with increased embedding dimensions and increased numbers of conv-attentional modules within blocks.
+
+6. Experiments
+
+6.1. Experiment Details
+
+Image Classiﬁcation. We perform image classiﬁcation on
+
+the standard ILSVRC-2012 ImageNet dataset [26]. The stan-
+
+dard ImageNet benchmark contains 1.3 million images in
+
+the training set and 50K images in the validation set, cov-
+
+ering 1000 object classes. Image cropping sizes are set to
+
+224×224. For fair comparison, we perform data augmenta-
+
+tion such as MixUp [48], CutMix [47], random erasing [51],
+
+repeated augmentation [11], and label smoothing [31], fol-
+
+lowing identical procedures in DeiT [34] with the exception
+
+that stochastic depth is not used [14].
+
+All experiment results of our models in Table 2 are re-
+
+ported at 300 epochs, consistent with previous methods [34].
+
+We train all models with a global batch size of 2048 with the
+
+NVIDIA Automatic Mixed Precision (AMP) enabled. We
+
+adopt the AdamW [20] optimizer with cosine learning rate
+
+decay, ﬁve warm-up epochs, and weight decay 0.05. The
+
+learning
+
+rate
+
+is
+
+scaled
+
+as
+
+5
+
+×
+
+10−4
+
+×
+
+global batch 512
+
+size .
+
+Object Detection and Instance Segmentation. We con-
+
+duct object detection and instance segmentation experiments
+
+on the Common Objects in Context (COCO2017) dataset
+
+[19]. The COCO2017 benchmark contains 118K training
+
+images and 5K validation images. We evaluate the gener-
+
+alization ability of CoaT in object detection and instance
+
+segmentation with the Mask R-CNN [9] framework. We
+
+follow the identical data processing settings in Mask R-CNN
+
+and enable the feature pyramid network (FPN) [18] to utilize
+
+multi-scale features. In addition, we perform object detec-
+
+tion based on Deformable DETR [52] following its data
+
+processing settings, using random horizontal ﬂips, resizing,
+
+and cropping as augmentation techniques.
+
+7
+
+Table 2. CoaT performance on ImageNet-1K validation set. Our CoaT models consistently outperform other methods while being parameter efﬁcient. ConvNets, attention-based models and Transformers with similar model size are grouped together for comparison. “#GFLOPs” is calculated with the input size 224×224. “*” indicates the improved performance after retraining with a better training scheme.
+
+Arch. ConvNets Transformers ConvNets Attention Transformers ConvNets
+Transformers
+
+Model
+EfﬁcientNet-B0 [33] ShufﬂeNet [49] MobileNet [12] MnasNet-A3 [32]
+DeiT-Tiny [34] CPVT-Tiny [4] T2T-ViT-10 [46] CoaT-Lite Tiny (Ours) CoaT Tiny (Ours)
+EfﬁcientNet-B2[33] ResNet-18 [10] REDNet-26 [17]
+SAN10 [50] LambdaNets [1]
+PVT-Tiny [38] CoaT-Lite Mini (Ours) CoaT Mini (Ours)
+EfﬁcientNet-B4 [33] ResNet-50 [10] ResNet-50∗ [10] ResNeXt50-32x4d [42] ResNeXt50-32x4d* [42] REDNet-101 [17] REDNet-152 [17] ResNet-101 [10] ResNet-101∗ [10] ResNeXt101-32x4d [42] ResNeXt101-32x4d∗ [42] ResNet-152 [10] ResNet-152∗ [10] ResNeXt101-64x4d [42] ResNeXt101-64x4d∗ [42]
+DeiT-Small [34] PVT-Small [38] CPVT-Small [4] T2T-ViTt-14 [46] T2T-ViTt-19 [46] PVT-Medium [38] PVT-Large [38] DeiT-Base [34] CPVT-Base [4] ViT-B/16 [8] ViT-L/16 [8] CoaT-Lite Small (Ours)
+
+#Params
+5.3M 5.4M 6.9M 5.2M
+5.7M 5.7M 5.8M 5.7M 5.5M
+9M 12M 9M
+11M 15M
+13M 11M 10M
+19M 25M 25M 25M 25M 25M 34M 45M 45M 45M 45M 60M 60M 84M 84M
+22M 24M 22M 22M 39M 44M 61M 86M 86M 86M 307M 20M
+
+Input
+2242 2242 2242 2242
+2242 2242 2242 2242 2242
+2602 2242 2242
+2242 2242
+2242 2242 2242
+3802 2242 2242 2242 2242 2242 2242 2242 2242 2242 2242 2242 2242 2242 2242
+2242 2242 2242 2242 2242 2242 2242 2242 2242 3842 3842 2242
+
+#GFLOPs
+0.4 0.5 0.6 0.4
+1.3 1.2 1.6 4.4
+1.0 1.8 1.7
+2.2 -
+1.9 2.0 6.8
+4.2 4.1 4.1 4.3 4.3 4.7 6.8 7.9 7.9 8.0 8.0 11.6 11.6 15.6 15.6
+4.6 3.8 5.2 8.4 6.7 9.8 17.6 55.4 190.7 4.0
+
+Top-1 Acc. @input
+77.1% 73.7% 74.7% 76.7%
+72.2% 73.4% 74.1% 76.6% 78.2%
+80.1% 69.8% 75.9%
+77.1% 78.4%
+75.1% 78.9% 80.8%
+82.9% 76.2% 79.1% 77.6% 79.5% 79.1% 79.3% 77.4% 79.9% 78.8% 80.6% 78.3% 80.8% 79.6% 81.5%
+79.8% 79.8% 80.5% 80.7% 81.4% 81.2% 81.7% 81.8% 81.9% 77.9% 76.5% 81.9%
+
+For Mask R-CNN optimization, we train the model with the ImageNet-pretrained backbone on 8 GPUs via SGD with momentum with learning rate 0.02. The training period contains 90K steps in 1× setting and 270K steps in 3× setting following Detectron2 [41]. For Deformable DETR optimization, we train the model with the pretrained backbone for 50 epochs, using an AdamW optimizer with initial learning rate 2 × 10−4, β1 = 0.9, and β2 = 0.999. We reduce the
+
+learning rate by a factor of 10 at epoch 40.
+6.2. CoaT for ImageNet Classiﬁcation
+Table 2 shows top-1 accuracy results of our models on the ImageNet validation set comparing with state-of-theart methods. Except for EfﬁcientNets, all reported models are evaluated with 224 × 224 image cropping. We separate model architectures into three categories: convolu-
+
+8
+
+Table 3. Object detection and instance segmentation results based on Mask R-CNN on the COCO val2017. Two Mask R-CNN with FPN settings (1× for 90k steps and 3× for 270k steps) are compared. We compare CoaT-Lite and CoaT results with ResNet and PVT. PVT results are taken from the reported numbers from [38] and its ofﬁcial repository.
+
+Backbone
+
+#Params
+
+Mask R-CNN w/ FPN 1×
+
+Mask R-CNN w/ FPN 3×
+
+(M)
+
+APb APb50 APb75 APm APm50 APm75 APb APb50 APb75 APm APm50 APm75
+
+ResNet-18
+
+31.3 34.2 54.1 36.7 31.3 51.1 33.2 36.3 56.5 39.3 33.2 53.5 35.4
+
+PVT-Tiny [38]
+
+32.9 36.7 59.2 39.3 35.1 56.7 37.3 39.8 62.2 43.0 37.4 59.3 39.9
+
+CoaT-Lite Mini (Ours) 30.7 39.2 61.5 42.1 36.0 58.0 38.5 41.6 63.0 45.1 37.6 59.7 40.2
+
+CoaT Mini (Ours)
+
+30.2 43.0 64.7 46.8 38.7 61.4 41.6 45.2 65.9 49.6 40.3 63.0 43.1
+
+ResNet-50
+
+44.3 38.6 59.5 42.1 35.2 56.3 37.4 41.0 61.9 44.5 37.2 58.6 39.9
+
+PVT-Small [38]
+
+44.1 40.4 62.9 43.8 37.8 60.1 40.3 43.0 65.3 46.9 39.9 62.5 42.8
+
+CoaT-Lite Small (Ours) 39.5 43.6 65.3 47.4 39.2 62.0 41.8 44.7 66.0 48.8 40.1 62.4 43.2
+
+Table 4. Object detection results based on Deformable DETR on COCO val2017. DD ResNet-50 (rep.) is our reproduced baseline result. ResNet-50 and our CoaT-Lite are directly comparable as the DD backbone because of the similar model size.
+
+Backbone
+DD ResNet-50 [52] DD ResNet-50 (rep.) DD CoaT-Lite Small (Ours)
+
+Deformable DETR (Multi-Scale)
+
+AP AP50 AP75 APS APM APL
+
+44.5 -
+
+- 27.6 47.6 59.6
+
+44.0 62.9 48.0 26.0 47.4 58.4
+
+46.9 66.3 51.0 28.4 50.3 62.5
+
+Top-1 Error (%) Top-1 Error (%)
+
+80
+
+80
+
+DeiT-Tiny (5.7M)
+
+DeiT-Small (22M)
+
+PVT-Tiny (13M)
+
+70
+
+PVT-Small (24M)
+
+70
+
+CoaT Tiny (5.5M)
+
+CoaT-Lite Small (20M)
+
+CoaT Mini (10M)
+
+60
+
+60
+
+50
+
+50
+
+40
+
+40
+
+30
+
+30
+
+20
+
+20
+
+0
+
+100
+
+200
+
+300
+
+0
+
+100
+
+200
+
+300
+
+Epochs
+
+Epochs
+
+Figure 7. Training curves on ImageNet-1K. (Left) CoaT Tiny
+
+and CoaT Mini top-1 validation errors. (Right) CoaT-Lite Small
+
+top-1 validation errors.
+
+tional networks (ConvNets), attention-based models (nonTransformer), and Transformers. Under around 5M, 10M, and 20M parameter budget constraints, CoaT and CoaT-Lite surpasses all reported Transformer-based architectures (see Table 2). In particular, our CoaT models bring a large performance gain to the baseline DeiT [34], which shows that our co-scale mechanism is essential to improve the performance of Transformer-based architectures.
+Our CoaT Tiny model achieves a 21.8% error rate, a decrease of 6.0% from our DeiT-Tiny baseline. CoaT Tiny also outperforms the strongly competitive model EfﬁcientNet-B0 by 1.1%. CoaT Mini surpasses PVT-Tiny and EfﬁcientNetB2 by 5.7% and 0.7% with similar model sizes. CoaTLite also achieves strong results under the three different model sizes while being competitively fast. Notably, our CoaT-Lite Small model (20M parameters) outperforms all reported Transformer-based architectures using similar or signiﬁcantly larger model sizes.
+We show training curves for CoaT and CoaT-Lite in Fig-
+
+ure 7. CoaT converges signiﬁcantly faster than competing image Transformers while achieving better generalization ability.
+6.3. Object Detection and Instance Segmentation
+Table 3 demonstrates CoaT object detection and instance segmentation results under the Mask R-CNN framework on the COCO val2017 dataset. Our CoaT and CoaT-Lite models show clear performance advantages over the ResNet and PVT backbones under both the 1× setting and the 3× setting. Our CoaT Mini obtains signiﬁcant performance improvement over CoaT-Lite Mini.
+We additionally perform object detection with the Deformable DETR (DD) framework in Table 4. We compare our models with the standard ResNet-50 backbone on the COCO dataset [19]. Our CoaT-Lite Small as the backbone achieves 2.9% improvement on average precision (AP) over the reproduced results of Deformable DETR with ResNet-50 [52].
+6.4. Ablation Study
+Effectiveness of Convolutional Position Encoding. We study the effectiveness of the combination of the convolutional position encoding in our Conv-Attention Module in Table 5. Our CoaT-Lite without any convolution position encoding results in poor performance (69.0% top-1 accuracy), indicating position encoding is essential for image transformers. We observe great improvements for CoaT-Lite variants with only either convolutional position encoding (Conv-Pos: Figure 2 bottom) or convolutional relative position encoding (Conv-Rel-Pos: Figure 2 top-right), which achieve 76.0% and 73.5% top-1 accuracy accordingly. We found CoaT-Lite with the combination of Conv-Pos and Conv-Rel-Pos learns a better classiﬁer (76.6% top-1 accuracy), making both position encoding schemes companion rather than conﬂict.
+Effectiveness of Convolutional Relative Position Encoding. For both CoaT-Lite and CoaT models, we report models with and without convolutional relative position encoding (Conv-Rel-Pos) in Table 6. We found consistent improvement for both CoaT-Lite and CoaT models that equipping
+
+9
+
+Table 5. Effectiveness of convolutional position encoding. All experiments are performed in the CoaT-Lite Tiny architecture. Performance is evaluated on ImageNet-1K validation set.
+
+Model CoaT-Lite (Tiny)
+
+Conv-Pos
+   
+
+Conv-Rel-Pos
+   
+
+Top-1 Acc.
+69.0% 73.5% 76.0% 76.6%
+
+Conv-Rel-Pos. Besides, the Conv-Rel-Pos is able to improve performance at modest increase in computational overhead.
+
+Table 6. Effectiveness of convolutional relative position encoding are evaluated in the CoaT-Lite and CoaT architectures under Tiny, Mini and Small parameter settings. “w/o relative” indicates the model with Conv-Pos only and the other model with no indication are the model with both Conv-Pos and Conv-Rel-Pos. Performance is evaluated on ImageNet-1K validation set.
+
+Size Tiny
+Mini
+Small
+
+Model
+CoaT-Lite w/o relative CoaT w/o relative CoaT-Lite CoaT
+CoaT-Lite w/o relative CoaT w/o relative CoaT-Lite CoaT
+CoaT-Lite w/o relative CoaT-Lite
+
+#Params
+5.6M 5.5M 5.7M 5.5M
+11M 10M 11M 10M
+19M 20M
+
+Input
+2242 2242 2242 2242
+2242 2242 2242 2242
+2242 2242
+
+#GFLOPs
+1.6 4.3 1.6 4.4
+1.9 6.7 2.0 6.8
+3.9 4.0
+
+Top-1 Acc. @input
+76.0% 77.3% 76.6% 78.2%
+78.2% 80.4% 78.9% 80.8%
+81.4% 81.9%
+
+Effectiveness of Co-Scale. In Table 7, we present performance results for two co-scale variants in CoaT, direct crosslayer attention and attention with feature interpolation. We also report CoaT without co-scale as a baseline. Comparing to CoaT without a co-scale mechanism, both co-scale variants show signiﬁcant performance improvements. Attention with feature interpolation offers a clear advantage over direct cross-layer attention due to less computational complexity and higher accuracy.
+
+Table 7. Effectiveness of co-scale. All experiments are performed in the CoaT Tiny architecture. Performance is evaluated on ImageNet-1K validation set.
+
+Size Model
+
+#Params Input #GFLOPs Top-1 Acc. @input
+
+Tiny CoaT w/o co-scale
+
+5.5M 2242
+
+4.4
+
+CoaT w/ co-scale
+
+- direct cross-layer attention
+
+5.5M 2242
+
+4.8
+
+- attention with feature interpolation 5.5M 2242
+
+4.4
+
+76.2%
+77.8% 78.2%
+
+7. Visualization
+We show feature and attention visualizations of our proposed CoaT model and DeiT [34] in Figure 8. For the sampled feature maps shown on the right side of the ﬁgure, we directly sample the ﬁrst six feature maps after different kinds of attention blocks. The visualization of CLS attention maps is done by attending the CLS (query) to all other spatial
+
+DeiT Self-Att Block
+
+<latexit sha1_base64="IC8/VYg5clsBBQ6KL5SplT5by7c=">AAACCHicbZDLSsNAFIYnXmu9RV26cLAIXZVEpLosuOmygr1AE8pkOmmHTiZh5kQooUs3voobF4q49RHc+TZO0yy09YeBn++cw5nzB4ngGhzn21pb39jc2i7tlHf39g8O7aPjjo5TRVmbxiJWvYBoJrhkbeAgWC9RjESBYN1gcjuvdx+Y0jyW9zBNmB+RkeQhpwQMGthnXqgIzZqzzK3PPOAR03iBujka2BWn5uTCq8YtTAUVag3sL28Y0zRiEqggWvddJwE/Iwo4FWxW9lLNEkInZMT6xkpiNvpZfsgMXxgyxGGszJOAc/p7IiOR1tMoMJ0RgbFers3hf7V+CuGNn3GZpMAkXSwKU4EhxvNU8JArRkFMjSFUcfNXTMfExAAmu7IJwV0+edV0LmtuvebeXVUa1SKOEjpF56iKXHSNGqiJWqiNKHpEz+gVvVlP1ov1bn0sWtesYuYE/ZH1+QOm75mo</latexit>
+H
+16
+
+⇥
+
+W 16
+
+CoaT Parallel Block Parallel Block Parallel Block
+
+<latexit sha1_base64="XcmMkzI76/Gf3pIqba/XrBaSDWs=">AAACCHicbZDLSsNAFIZP6q3WW9SlCweL0FVJqqjLgpsuK9gLNKFMppN26OTCzEQoIUs3voobF4q49RHc+TZO0yy09YeBn++cw5nzezFnUlnWt1FaW9/Y3CpvV3Z29/YPzMOjrowSQWiHRDwSfQ9LyllIO4opTvuxoDjwOO1509t5vfdAhWRReK9mMXUDPA6ZzwhWGg3NU8cXmKStLL1oZI5iAZVogXo5GppVq27lQqvGLkwVCrWH5pczikgS0FARjqUc2Fas3BQLxQinWcVJJI0xmeIxHWgbYr3RTfNDMnSuyQj5kdAvVCinvydSHEg5CzzdGWA1kcu1OfyvNkiUf+OmLIwTRUOyWOQnHKkIzVNBIyYoUXymDSaC6b8iMsE6BqWzq+gQ7OWTV023Ubev6vbdZbVZK+IowwmcQQ1suIYmtKANHSDwCM/wCm/Gk/FivBsfi9aSUcwcwx8Znz+guZmk</latexit>
+H
+32
+
+⇥
+
+W 32
+
+<latexit sha1_base64="IC8/VYg5clsBBQ6KL5SplT5by7c=">AAACCHicbZDLSsNAFIYnXmu9RV26cLAIXZVEpLosuOmygr1AE8pkOmmHTiZh5kQooUs3voobF4q49RHc+TZO0yy09YeBn++cw5nzB4ngGhzn21pb39jc2i7tlHf39g8O7aPjjo5TRVmbxiJWvYBoJrhkbeAgWC9RjESBYN1gcjuvdx+Y0jyW9zBNmB+RkeQhpwQMGthnXqgIzZqzzK3PPOAR03iBujka2BWn5uTCq8YtTAUVag3sL28Y0zRiEqggWvddJwE/Iwo4FWxW9lLNEkInZMT6xkpiNvpZfsgMXxgyxGGszJOAc/p7IiOR1tMoMJ0RgbFers3hf7V+CuGNn3GZpMAkXSwKU4EhxvNU8JArRkFMjSFUcfNXTMfExAAmu7IJwV0+edV0LmtuvebeXVUa1SKOEjpF56iKXHSNGqiJWqiNKHpEz+gVvVlP1ov1bn0sWtesYuYE/ZH1+QOm75mo</latexit>
+H
+16
+
+⇥
+
+W 16
+
+<latexit sha1_base64="ZLC+0blfJcWvHP2/y4RQvCrsVoI=">AAACBnicbZDLSsNAFIYnXmu9RV2KMFiErkoiol0W3HRZwV6gCWUynbRDJ5MwcyKU0JUbX8WNC0Xc+gzufBsnbRba+sPAz3fO4cz5g0RwDY7zba2tb2xubZd2yrt7+weH9tFxR8epoqxNYxGrXkA0E1yyNnAQrJcoRqJAsG4wuc3r3QemNI/lPUwT5kdkJHnIKQGDBvaZFypCs+Ysq8884BHTeEG6ORnYFafmzIVXjVuYCirUGthf3jCmacQkUEG07rtOAn5GFHAq2KzspZolhE7IiPWNlcQs9LP5GTN8YcgQh7EyTwKe098TGYm0nkaB6YwIjPVyLYf/1fophHU/4zJJgUm6WBSmAkOM80zwkCtGQUyNIVRx81dMx8SkACa5sgnBXT551XQua+51zb27qjSqRRwldIrOURW56AY1UBO1UBtR9Iie0St6s56sF+vd+li0rlnFzAn6I+vzB7s4mTY=</latexit>
+H
+8
+
+⇥
+
+W 8
+
+Serial Block Serial Block Serial Block
+
+<latexit sha1_base64="XcmMkzI76/Gf3pIqba/XrBaSDWs=">AAACCHicbZDLSsNAFIZP6q3WW9SlCweL0FVJqqjLgpsuK9gLNKFMppN26OTCzEQoIUs3voobF4q49RHc+TZO0yy09YeBn++cw5nzezFnUlnWt1FaW9/Y3CpvV3Z29/YPzMOjrowSQWiHRDwSfQ9LyllIO4opTvuxoDjwOO1509t5vfdAhWRReK9mMXUDPA6ZzwhWGg3NU8cXmKStLL1oZI5iAZVogXo5GppVq27lQqvGLkwVCrWH5pczikgS0FARjqUc2Fas3BQLxQinWcVJJI0xmeIxHWgbYr3RTfNDMnSuyQj5kdAvVCinvydSHEg5CzzdGWA1kcu1OfyvNkiUf+OmLIwTRUOyWOQnHKkIzVNBIyYoUXymDSaC6b8iMsE6BqWzq+gQ7OWTV023Ubev6vbdZbVZK+IowwmcQQ1suIYmtKANHSDwCM/wCm/Gk/FivBsfi9aSUcwcwx8Znz+guZmk</latexit>
+H
+32
+
+⇥
+
+W 32
+
+<latexit sha1_base64="IC8/VYg5clsBBQ6KL5SplT5by7c=">AAACCHicbZDLSsNAFIYnXmu9RV26cLAIXZVEpLosuOmygr1AE8pkOmmHTiZh5kQooUs3voobF4q49RHc+TZO0yy09YeBn++cw5nzB4ngGhzn21pb39jc2i7tlHf39g8O7aPjjo5TRVmbxiJWvYBoJrhkbeAgWC9RjESBYN1gcjuvdx+Y0jyW9zBNmB+RkeQhpwQMGthnXqgIzZqzzK3PPOAR03iBujka2BWn5uTCq8YtTAUVag3sL28Y0zRiEqggWvddJwE/Iwo4FWxW9lLNEkInZMT6xkpiNvpZfsgMXxgyxGGszJOAc/p7IiOR1tMoMJ0RgbFers3hf7V+CuGNn3GZpMAkXSwKU4EhxvNU8JArRkFMjSFUcfNXTMfExAAmu7IJwV0+edV0LmtuvebeXVUa1SKOEjpF56iKXHSNGqiJWqiNKHpEz+gVvVlP1ov1bn0sWtesYuYE/ZH1+QOm75mo</latexit>
+H
+16
+
+⇥
+
+W 16
+
+<latexit sha1_base64="ZLC+0blfJcWvHP2/y4RQvCrsVoI=">AAACBnicbZDLSsNAFIYnXmu9RV2KMFiErkoiol0W3HRZwV6gCWUynbRDJ5MwcyKU0JUbX8WNC0Xc+gzufBsnbRba+sPAz3fO4cz5g0RwDY7zba2tb2xubZd2yrt7+weH9tFxR8epoqxNYxGrXkA0E1yyNnAQrJcoRqJAsG4wuc3r3QemNI/lPUwT5kdkJHnIKQGDBvaZFypCs+Ysq8884BHTeEG6ORnYFafmzIVXjVuYCirUGthf3jCmacQkUEG07rtOAn5GFHAq2KzspZolhE7IiPWNlcQs9LP5GTN8YcgQh7EyTwKe098TGYm0nkaB6YwIjPVyLYf/1fophHU/4zJJgUm6WBSmAkOM80zwkCtGQUyNIVRx81dMx8SkACa5sgnBXT551XQua+51zb27qjSqRRwldIrOURW56AY1UBO1UBtR9Iie0St6s56sF+vd+li0rlnFzAn6I+vzB7s4mTY=</latexit>
+H
+8
+
+⇥
+
+W 8
+
+Serial Block
+
+<latexit sha1_base64="ANkyxE5ehEkjQQq1iuxdEy52vkM=">AAACBnicbZDLSsNAFIYnXmu9RV2KMFiErkoiRV0W3HRZwV6gCWUynbRDJ5MwcyKU0JUbX8WNC0Xc+gzufBsnbRba+sPAz3fO4cz5g0RwDY7zba2tb2xubZd2yrt7+weH9tFxR8epoqxNYxGrXkA0E1yyNnAQrJcoRqJAsG4wuc3r3QemNI/lPUwT5kdkJHnIKQGDBvaZFypCs+Ysq8884BHTeEG6ORnYFafmzIVXjVuYCirUGthf3jCmacQkUEG07rtOAn5GFHAq2KzspZolhE7IiPWNlcQs9LP5GTN8YcgQh7EyTwKe098TGYm0nkaB6YwIjPVyLYf/1fophDd+xmWSApN0sShMBYYY55ngIVeMgpgaQ6ji5q+YjolJAUxyZROCu3zyqulc1tyrmntXrzSqRRwldIrOURW56Bo1UBO1UBtR9Iie0St6s56sF+vd+li0rlnFzAn6I+vzB67ImS4=</latexit>
+H
+4
+
+⇥
+
+W 4
+
+CLS Attention Maps
+
+Sampled Feature Maps
+
+Figure 8. Visualization of CLS attention maps and sampled feature maps. The visualization is conducted on DeiT [34] and our proposed CoaT model trained on ImageNet. The visualization of the serial block is adopted from CoaT-Lite Mini and the visualization of the parallel block is adopted from CoaT Mini. The ﬁrst six feature maps are sampled from each layer.
+
+positions (keys) in the feature map. Note that although our factorized attention mechanism does matrix multiplication between keys and values during training, we are still able to materialize the CLS attention map that resembles the scaled dot-product attention.
+Without the coarse-to-ﬁne route, the sampled features in DeiT cannot capture low-level structure features that are essential for downstream tasks. The feature samples from DeiT also show low feature richness, resulting in poor classiﬁcation performance. In our CoaT visualization, we show high-diversity multi-scale feature maps. From the visualization of serial blocks, we see both high-level abstraction and low-level parts of a dog are captured. Contexts play an important role in object recognition [22] and semantic labeling [35]. The attention visualization from parallel blocks shows that multi-scale contexts are further mixed to enhance feature richness.
+8. Conclusion
+In this paper, we have presented a Transformer based image classiﬁer, Co-scale conv-attentional image Transformer (CoaT), in which cross-scale attention and efﬁcient convolution-like attention operations have been developed. CoaT’s small models attain strong classiﬁcation results on ImageNet, and their applicability to downstream computer vision tasks have been demonstrated in object detection and instance segmentation.
+Acknowledgments. This work is supported by NSF Award IIS-1717431. Tyler Chang is partially supported by the UCSD HDSI graduate fellowship.
+
+10
+
+References
+[1] Irwan Bello. Lambdanetworks: Modeling long-range interactions without attention. In ICLR, 2021.
+[2] Nicolas Carion, Francisco Massa, Gabriel Synnaeve, Nicolas Usunier, Alexander Kirillov, and Sergey Zagoruyko. End-toend object detection with transformers. In ECCV, 2020.
+[3] Krzysztof Choromanski, Valerii Likhosherstov, David Dohan, Xingyou Song, Andreea Gane, Tamas Sarlos, Peter Hawkins, Jared Davis, Afroz Mohiuddin, Lukasz Kaiser, et al. Rethinking attention with performers. arXiv preprint arXiv:2009.14794, 2020.
+[4] Xiangxiang Chu, Bo Zhang, Zhi Tian, Xiaolin Wei, and Huaxia Xia. Do we really need explicit position encodings for vision transformers? arXiv preprint arXiv:2102.10882, 2021.
+[5] Jifeng Dai, Haozhi Qi, Yuwen Xiong, Yi Li, Guodong Zhang, Han Hu, and Yichen Wei. Deformable convolutional networks. In ICCV, 2017.
+[6] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. Bert: Pre-training of deep bidirectional transformers for language understanding. In NAACL-HLT, 2019.
+[7] Linhao Dong, Shuang Xu, and Bo Xu. Speech-transformer: a no-recurrence sequence-to-sequence model for speech recognition. In IEEE International Conference on Acoustics, Speech and Signal Processing, pages 5884–5888, 2018.
+[8] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby. An image is worth 16x16 words: Transformers for image recognition at scale. In ICLR, 2021.
+[9] Kaiming He, Georgia Gkioxari, Piotr Dolla´r, and Ross Girshick. Mask r-cnn. In ICCV, 2017.
+[10] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In Proceedings of the IEEE conference on computer vision and pattern recognition, pages 770–778, 2016.
+[11] Elad Hoffer, Tal Ben-Nun, Itay Hubara, Niv Giladi, Torsten Hoeﬂer, and Daniel Soudry. Augment your batch: Improving generalization through instance repetition. In CVPR, 2020.
+[12] Andrew G Howard, Menglong Zhu, Bo Chen, Dmitry Kalenichenko, Weijun Wang, Tobias Weyand, Marco Andreetto, and Hartwig Adam. Mobilenets: Efﬁcient convolutional neural networks for mobile vision applications. arXiv preprint arXiv:1704.04861, 2017.
+[13] Han Hu, Zheng Zhang, Zhenda Xie, and Stephen Lin. Local relation networks for image recognition. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 3464–3473, 2019.
+[14] Gao Huang, Yu Sun, Zhuang Liu, Daniel Sedra, and Kilian Q Weinberger. Deep networks with stochastic depth. In ECCV, 2016.
+[15] Alex Krizhevsky, Ilya Sutskever, and Geoffrey E Hinton. Imagenet classiﬁcation with deep convolutional neural networks. In Proc. Advances in Neural Inf. Process. Syst., 2012.
+
+[16] Yann LeCun, Le´on Bottou, Yoshua Bengio, and Patrick Haffner. Gradient-based learning applied to document recognition. Proceedings of the IEEE, 86(11):2278–2324, 1998.
+[17] Duo Li, Jie Hu, Changhu Wang, Xiangtai Li, Qi She, Lei Zhu, Tong Zhang, and Qifeng Chen. Involution: Inverting the inherence of convolution for visual recognition. In CVPR, 2021.
+[18] Tsung-Yi Lin, Piotr Dolla´r, Ross Girshick, Kaiming He, Bharath Hariharan, and Serge Belongie. Feature pyramid networks for object detection. In CVPR, 2017.
+[19] Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dolla´r, and C Lawrence Zitnick. Microsoft coco: Common objects in context. In ECCV, 2014.
+[20] Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. arXiv preprint arXiv:1711.05101, 2017.
+[21] David G Lowe. Distinctive image features from scaleinvariant keypoints. International journal of computer vision, 60(2):91–110, 2004.
+[22] Aude Oliva and Antonio Torralba. The role of context in object recognition. Trends in cognitive sciences, 11(12):520– 527, 2007.
+[23] Alec Radford, Karthik Narasimhan, Tim Salimans, and Ilya Sutskever. Improving language understanding by generative pre-training. 2018.
+[24] Prajit Ramachandran, Niki Parmar, Ashish Vaswani, Irwan Bello, Anselm Levskaya, and Jonathon Shlens. Standalone self-attention in vision models. arXiv preprint arXiv:1906.05909, 2019.
+[25] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image segmentation. In International Conference on Medical image computing and computer-assisted intervention, 2015.
+[26] Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, Alexander C. Berg, and Li Fei-Fei. ImageNet Large Scale Visual Recognition Challenge. International Journal of Computer Vision (IJCV), 115(3):211– 252, 2015.
+[27] Peter Shaw, Jakob Uszkoreit, and Ashish Vaswani. Selfattention with relative position representations. In NAACLHLT, 2018.
+[28] Zhuoran Shen, Mingyuan Zhang, Haiyu Zhao, Shuai Yi, and Hongsheng Li. Efﬁcient attention: Attention with linear complexities. In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision, pages 3531–3539, 2021.
+[29] Karen Simonyan and Andrew Zisserman. Very deep convolutional networks for large-scale image recognition. In ICLR, 2015.
+[30] Christian Szegedy, Wei Liu, Yangqing Jia, Pierre Sermanet, Scott Reed, Dragomir Anguelov, Dumitru Erhan, Vincent Vanhoucke, and Andrew Rabinovich. Going deeper with convolutions. In CVPR, 2015.
+[31] Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jon Shlens, and Zbigniew Wojna. Rethinking the inception architecture for computer vision. In CVPR, 2016.
+
+11
+
+[32] Mingxing Tan, Bo Chen, Ruoming Pang, Vijay Vasudevan, Mark Sandler, Andrew Howard, and Quoc V Le. Mnasnet: Platform-aware neural architecture search for mobile. In CVPR, 2019.
+[33] Mingxing Tan and Quoc Le. Efﬁcientnet: Rethinking model scaling for convolutional neural networks. In ICML, 2019.
+[34] Hugo Touvron, Matthieu Cord, Matthijs Douze, Francisco Massa, Alexandre Sablayrolles, and Herve´ Je´gou. Training data-efﬁcient image transformers & distillation through attention. arXiv preprint arXiv:2012.12877, 2020.
+[35] Zhuowen Tu. Auto-context and its application to high-level vision tasks. In CVPR, 2008.
+[36] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Proc. Advances in Neural Inf. Process. Syst., 2017.
+[37] J Wang, K Sun, T Cheng, B Jiang, C Deng, Y Zhao, D Liu, Y Mu, M Tan, X Wang, et al. Deep high-resolution representation learning for visual recognition. IEEE Transactions on Pattern Analysis and Machine Intelligence, 2020.
+[38] Wenhai Wang, Enze Xie, Xiang Li, Deng-Ping Fan, Kaitao Song, Ding Liang, Tong Lu, Ping Luo, and Ling Shao. Pyramid vision transformer: A versatile backbone for dense prediction without convolutions. arXiv preprint arXiv:2102.12122, 2021.
+[39] Xiaolong Wang, Ross Girshick, Abhinav Gupta, and Kaiming He. Non-local neural networks. In CVPR, 2018.
+[40] Andrew Witkin. Scale-space ﬁltering: A new approach to multi-scale description. In IEEE International Conference on Acoustics, Speech, and Signal Processing, volume 9, pages 150–153, 1984.
+[41] Yuxin Wu, Alexander Kirillov, Francisco Massa, Wan-Yen Lo, and Ross Girshick. Detectron2. https://github. com/facebookresearch/detectron2, 2019.
+[42] Saining Xie, Ross Girshick, Piotr Dolla´r, Zhuowen Tu, and Kaiming He. Aggregated residual transformations for deep neural networks. In CVPR, 2017.
+[43] Saining Xie, Sainan Liu, Zeyu Chen, and Zhuowen Tu. Attentional shapecontextnet for point cloud recognition. In CVPR, 2018.
+[44] Kelvin Xu, Jimmy Ba, Ryan Kiros, Kyunghyun Cho, Aaron Courville, Ruslan Salakhudinov, Rich Zemel, and Yoshua Bengio. Show, attend and tell: Neural image caption generation with visual attention. In ICML, 2015.
+[45] Yiheng Xu, Minghao Li, Lei Cui, Shaohan Huang, Furu Wei, and Ming Zhou. Layoutlm: Pre-training of text and layout for document image understanding. In SIGKDD, 2020.
+[46] Li Yuan, Yunpeng Chen, Tao Wang, Weihao Yu, Yujun Shi, Francis EH Tay, Jiashi Feng, and Shuicheng Yan. Tokensto-token vit: Training vision transformers from scratch on imagenet. arXiv preprint arXiv:2101.11986, 2021.
+[47] Sangdoo Yun, Dongyoon Han, Seong Joon Oh, Sanghyuk Chun, Junsuk Choe, and Youngjoon Yoo. Cutmix: Regularization strategy to train strong classiﬁers with localizable features. In ICCV, 2019.
+[48] Hongyi Zhang, Moustapha Cisse, Yann N Dauphin, and David Lopez-Paz. mixup: Beyond empirical risk minimization. arXiv preprint arXiv:1710.09412, 2017.
+
+[49] Xiangyu Zhang, Xinyu Zhou, Mengxiao Lin, and Jian Sun. Shufﬂenet: An extremely efﬁcient convolutional neural network for mobile devices. In CVPR, 2018.
+[50] Hengshuang Zhao, Jiaya Jia, and Vladlen Koltun. Exploring self-attention for image recognition. In CVPR, 2020.
+[51] Zhun Zhong, Liang Zheng, Guoliang Kang, Shaozi Li, and Yi Yang. Random erasing data augmentation. In AAAI, pages 13001–13008, 2020.
+[52] Xizhou Zhu, Weijie Su, Lewei Lu, Bin Li, Xiaogang Wang, and Jifeng Dai. Deformable detr: Deformable transformers for end-to-end object detection. In ICLR, 2021.
+
+12
+

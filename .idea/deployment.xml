@@ -2,7 +2,7 @@
 <project version="4">
   <component name="PublishConfigData" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
-      <paths name="root@172.16.32.4:25502 password">
+      <paths name="root@172.16.32.4:25524 password">
         <serverdata>
           <mappings>
             <mapping deploy="/opt/data/private/data/scaa" local="$PROJECT_DIR$" />

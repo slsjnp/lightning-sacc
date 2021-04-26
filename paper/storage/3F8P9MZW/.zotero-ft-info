@@ -1,0 +1,16 @@
+Title:          A Stacked Fully Convolutional Networks with Feature Alignment Framework for Multi-Label Land-cover Segmentation
+Subject:         Applying deep-learning methods, especially fully convolutional networks (FCNs), has become a popular option for land-cover classification or segmentation in remote sensing. Compared with traditional solutions, these approaches have shown promising generalization capabilities and precision levels in various datasets of different scales, resolutions, and imaging conditions. To achieve superior performance, a lot of research has focused on constructing more complex or deeper networks. However, using an ensemble of different fully convolutional models to achieve better generalization and to prevent overfitting has long been ignored. In this research, we design four stacked fully convolutional networks (SFCNs), and a feature alignment framework for multi-label land-cover segmentation. The proposed feature alignment framework introduces an alignment loss of features extracted from basic models to balance their similarity and variety. Experiments on a very high resolution(VHR) image dataset with six categories of land-covers indicates that the proposed SFCNs can gain better performance when compared to existing deep learning methods. In the 2nd variant of SFCN, the optimal feature alignment gains increments of 4.2% (0.772 vs. 0.741), 6.8% (0.629 vs. 0.589), and 5.5% (0.727 vs. 0.689) for its f1-score, jaccard index, and kappa coefficient, respectively. 
+Keywords:       land-cover classification; image segmentation; ensemble learing; feature alignment; fully convolutional networks
+Author:         Guangming Wu, Yimin Guo and Xiaowei Shao
+Creator:        LaTeX with hyperref package
+Producer:       pdfTeX-1.40.17
+CreationDate:   Fri May  3 17:31:01 2019
+ModDate:        Fri May  3 17:31:01 2019
+Tagged:         no
+Form:           none
+Pages:          19
+Encrypted:      no
+Page size:      595.276 x 841.89 pts (A4) (rotated 0 degrees)
+File size:      44831938 bytes
+Optimized:      no
+PDF version:    1.5

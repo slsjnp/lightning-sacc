@@ -110,9 +110,9 @@ class Encoder3d(nn.Module):
         x4 = self.layer4
 
         # upsample
-        self.upsample = nn.Upsample(scale_factor=16)
-        self.final_conv = nn.Conv3d(in_channels=64, out_channels=num_classes, kernel_size=1)
-        x5 = self.final_conv
+        # self.upsample = nn.Upsample(scale_factor=16)
+        # self.final_conv = nn.Conv3d(in_channels=64, out_channels=num_classes, kernel_size=1)
+        # x5 = self.final_conv
 
     def _make_layer(self, block, planes, blocks=2, stride=1, dilate=False, norm_layer=None):
         downsample = None
@@ -145,8 +145,8 @@ class Encoder3d(nn.Module):
         x = self.layer4(x)
         f3d5 = x
 
-        x = self.upsample(x)
-        x = self.final_conv(x)
+        # x = self.upsample(x)
+        # x = self.final_conv(x)
         f3d6 = x
 
         return f3d2, f3d3, f3d4, f3d5, f3d6
@@ -233,6 +233,7 @@ class ScaledDotProductAttention(nn.Module):
     def forward(self, q, k, v, scale=None, attn_mask=None):
         # q.unsqueeze(3)
         # b c d 1
+        # q,k,v  q:unsqueeze
         attention = torch.matmul(q.unsqueeze(3).transpose(2, 3), k.squeeze().transpose(1, 2)).transpose(2, 3)
         # attention = torch.bmm(q, k.transpose(1, 2))
         if scale:
@@ -404,7 +405,8 @@ class SCAA(nn.Module):
         self.up1 = Up(256, 320, 128, num_features=num_features)
         self.up2 = Up(128, 192, 64, num_features=num_features)
         self.up3 = Up(64, 128, 32, num_features=num_features)
-        self.up4 = Up(32, 80, 16, num_features=num_features)
+        # self.up4 = Up(32, 80, 16, num_features=num_features)
+        self.up4 = Up(32, 80, 1, num_features=num_features)
 
         # 分类数量为最后的通道数
         self.precls_conv = nn.Sequential(
@@ -516,30 +518,34 @@ class SCAA(nn.Module):
         x = self.up3(slip2, x)
         x = self.up4(slip1, x)
 
-        task_encoding = self.encoding_task(task_id)
-        task_encoding.unsqueeze_(2).unsqueeze_(2)
-        x_cond = torch.cat([x_feat, task_encoding], 1)
-        params = self.controller(x_cond)
-        params.squeeze_(-1).squeeze_(-1).squeeze_(-1)
-
-        head_inputs = self.precls_conv(x)
-
-        N, _, H, W = head_inputs.size()
-        head_inputs = head_inputs.reshape(1, -1, H, W)
-
-        weight_nums, bias_nums = [], []
-        weight_nums.append(8 * 8)
-        weight_nums.append(8 * 8)
-        weight_nums.append(8 * 2)
-        bias_nums.append(8)
-        bias_nums.append(8)
-        bias_nums.append(2)
-        weights, biases = self.parse_dynamic_params(params, self.n_classes, weight_nums, bias_nums)
-
-        logits = self.heads_forward(head_inputs, weights, biases, N)
-
-        logits = logits.reshape(-1, 2, H, W)
-
+        out = nn.Sigmoid()(x)
+        return out
+        ################################################################################################################
+        # task_encoding = self.encoding_task(task_id)
+        # task_encoding.unsqueeze_(2).unsqueeze_(2)
+        # x_cond = torch.cat([x_feat, task_encoding], 1)
+        # params = self.controller(x_cond)
+        # params.squeeze_(-1).squeeze_(-1).squeeze_(-1)
+        #
+        # head_inputs = self.precls_conv(x)
+        #
+        # N, _, H, W = head_inputs.size()
+        # head_inputs = head_inputs.reshape(1, -1, H, W)
+        #
+        # weight_nums, bias_nums = [], []
+        # weight_nums.append(8 * 8)
+        # weight_nums.append(8 * 8)
+        # weight_nums.append(8 * 2)
+        # bias_nums.append(8)
+        # bias_nums.append(8)
+        # bias_nums.append(2)
+        # weights, biases = self.parse_dynamic_params(params, self.n_classes, weight_nums, bias_nums)
+        #
+        # logits = self.heads_forward(head_inputs, weights, biases, N)
+        #
+        # logits = logits.reshape(-1, 2, H, W)
+        ################################################################################################################
+        #
         # 3d + 2d => MSFA
 
         # 2d decoder
@@ -551,7 +557,7 @@ class SCAA(nn.Module):
         # dynamic head
 
         # layer for output
-        return logits
+        # return logits
 
 
 class Up(nn.Module):

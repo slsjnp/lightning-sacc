@@ -1,0 +1,1489 @@
+MaX-DeepLab: End-to-End Panoptic Segmentation with Mask Transformers
+Huiyu Wang1* Yukun Zhu2 Hartwig Adam2 Alan Yuille1 Liang-Chieh Chen2 1Johns Hopkins University 2Google Research
+
+arXiv:2012.00759v1 [cs.CV] 1 Dec 2020
+
+Abstract
+We present MaX-DeepLab, the Ô¨Årst end-to-end model for panoptic segmentation. Our approach simpliÔ¨Åes the current pipeline that depends heavily on surrogate sub-tasks and hand-designed components, such as box detection, nonmaximum suppression, thing-stuff merging, etc. Although these sub-tasks are tackled by area experts, they fail to comprehensively solve the target task. By contrast, our MaX-DeepLab directly predicts class-labeled masks with a mask transformer, and is trained with a panoptic quality inspired loss via bipartite matching. Our mask transformer employs a dual-path architecture that introduces a global memory path in addition to a CNN path, allowing direct communication with any CNN layers. As a result, MaXDeepLab shows a signiÔ¨Åcant 7.1% PQ gain in the box-free regime on the challenging COCO dataset, closing the gap between box-based and box-free methods for the Ô¨Årst time. A small variant of MaX-DeepLab improves 3.0% PQ over DETR with similar parameters and M-Adds. Furthermore, MaX-DeepLab, without test time augmentation, achieves new state-of-the-art 51.3% PQ on COCO test-dev set.
+
+Panoptic
+Segmentation
+Ours
+
+Instance
+Segmentation
+Semantic
+Segmentation
+
+Box
+Detection
+Box-based
+Segmentation
+
+Anchor
+Classification
+Anchor
+Regression
+
+Previous Methods (Panoptic-FPN)
+Figure 1. Our method predicts panoptic segmentation masks directly from images, while previous methods (Panoptic-FPN as an example) rely on a tree of surrogate sub-tasks. Panoptic segmentation masks are obtained by merging semantic and instance segmentation results. Instance segmentation is further decomposed into box detection and box-based segmentation, while box detection is achieved by anchor regression and anchor classiÔ¨Åcation.
+
+1. Introduction
+The goal of panoptic segmentation [48] is to predict a set of non-overlapping masks along with their corresponding class labels. Modern panoptic segmentation methods address this mask prediction problem by approximating the target task with multiple surrogate sub-tasks. For example, Panoptic-FPN [47] adopts a ‚Äòbox-based pipeline‚Äô with three levels of surrogate sub-tasks, as demonstrated in a tree structure in Fig. 1. Each level of this proxy tree involves manually-designed modules, such as anchors [77], box assignment rules [105], non-maximum suppression (NMS) [7], thing-stuff merging [98], etc. Although there are good solutions [77, 12, 33] to individual surrogate subtasks and modules, undesired artifacts are introduced when these sub-tasks Ô¨Åt into a pipeline for panoptic segmentation, especially in the challenging conditions (Fig. 2).
+*Work done while an intern at Google.
+
+(a) Our MaX-DeepLab (b) Axial-DeepLab [89](c) DetectoRS [76] 51.1 PQ (box-free) 43.4 PQ (box-free) 48.6 PQ (box-based)
+Figure 2. A case study for our method and state-of-the-art box-free and box-based methods. (a) Our end-to-end MaX-DeepLab correctly segments a dog sitting on a chair. (b) Axial-DeepLab [89] relies on a surrogate sub-task of regressing object center offsets [21]. It fails because the centers of the dog and the chair are close to each other. (c) DetectoRS [76] classiÔ¨Åes object bounding boxes, instead of masks, as a surrogate sub-task. It Ô¨Ålters out the chair mask because the chair bounding box has a low conÔ¨Ådence.
+Recent work on panoptic segmentation attempted to simplify this box-based pipeline. For example, UPSNet [98] proproses a parameter-free panoptic head, permitting backpropagation to both semantic and instance segmentation modules. Recently, DETR [10] presents an end-to-end approach for box detection, which is used to replace detectors
+
+1
+
+Method
+Panoptic-FPN [47] UPSNet [98] DETR [10]
+
+Anchor Center NMS Merge Box -Free -Free -Free -Free -Free
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Axial-DeepLab [89] 
+
+MaX-DeepLab
+
+
+
+
+
+
+
+
+
+
+
+Table 1. Our end-to-end MaX-DeepLab dispenses with these common hand-designed components necessary for existing methods.
+
+in panoptic segmentation, but the whole training process of DETR still relies heavily on the box detection task.
+Another line of work made efforts to completely remove boxes from the pipeline, which aligns better with the maskbased deÔ¨Ånition of panoptic segmentation. The state-of-theart method in this regime, Axial-DeepLab [89], along with other box-free methods [100, 21, 11], predicts pixel-wise offsets to pre-deÔ¨Åned instance centers. But this center-based surrogate sub-task makes it challenging to deal with highly deformable objects, or near-by objects with close centers. As a result, box-free methods do not perform as well as box-based methods on the challenging COCO dataset [60].
+In this paper, we streamline the panoptic segmentation pipeline with an end-to-end approach. Inspired by DETR [10], our model directly predicts a set of nonoverlapping masks and their corresponding semantic labels with a mask transformer. The output masks and classes are optimized with a panoptic quality (PQ) style objective. SpeciÔ¨Åcally, inspired by the deÔ¨Ånition of PQ [48], we deÔ¨Åne a similarity metric between two class-labeled masks as the multiplication of their mask similarity and their class similarity. Our model is trained by maximizing this similarity between ground truth masks and predicted masks via oneto-one bipartite matching [51, 82, 10]. This direct modeling of panoptic segmentation enables end-to-end training and inference, removing those hand-coded priors that are necessary in existing box-based and box-free methods (Tab. 1). Our method is dubbed MaX-DeepLab for extending AxialDeepLab with a Mask Xformer.
+In companion with direct training and inference, we equip our mask transformer with a novel architecture. Instead of stacking a traditional transformer [87, 10] on top of a Convolutional Neural Network (CNN) [52], we propose a dual-path framework for combining CNNs with transformers. SpeciÔ¨Åcally, we enable any CNN layer to read and write a global memory, using our dual-path transformer block. This block supports all types of attention between the CNN-path and the memory-path, including memorypath self-attention (M2M), pixel-path axial self-attention (P2P), memory-to-pixel attention (M2P), and Ô¨Ånally pixelto-memory attention (P2M). The transformer block can be inserted anywhere in a CNN, enabling communication with
+
+the global memory at any layer. Besides this communication module, our MaX-DeepLab employs a stackedhourglass-style decoder [78, 71, 19]. The decoder aggregates multi-scale features into a high resolution output, which is then multiplied with the global memory feature, to form our mask set prediction. The classes for the masks are predicted with another branch of the mask transformer.
+We evaluate MaX-DeepLab on one of the most challenging panoptic segmentation datasets, COCO [60], against the state-of-the-art box-free method, Axial-DeepLab [89], and state-of-the-art box-based method, DetectoRS [93] (Fig. 2). Our MaX-DeepLab, without test time augmentation (TTA), achieves the state-of-the-art result of 51.3% PQ on the testdev set. This result surpasses Axial-DeepLab (with TTA) by 7.1% PQ in the box-free regime, and outperforms DetectoRS (with TTA) by 1.7% PQ, bridging the gap between box-based and box-free methods for the Ô¨Årst time. For a fair comparison with DETR [10], we also evaluate a lightweight model, MaX-DeepLab-S, that matches the number of parameters and M-Adds of DETR. We observe that MaXDeepLab-S outperforms DETR by 3.3% PQ on the val set and 3.0% PQ on the test-dev set. In addition, we perform extensive ablation studies and analyses on our end-to-end formulation, model scaling, dual-path architectures, and our loss functions. We also notice that the extra-long training schedule of DETR [10] is not necessary for MaX-DeepLab.
+To summarize, our contributions are four-fold: ‚Ä¢ MaX-DeepLab is the Ô¨Årst end-to-end model for panop-
+tic segmentation, inferring masks and classes directly without hand-coded priors like object centers or boxes. ‚Ä¢ We propose a training objective that optimizes a PQstyle loss function via a PQ-style bipartite matching between predicted masks and ground truth masks. ‚Ä¢ Our dual-path transformer enables CNNs to read and write a global memory at any layer, providing a new way of combining transformers with CNNs. ‚Ä¢ MaX-DeepLab closes the gap between box-based and box-free methods and sets a new state-of-the-art on COCO, even without using test time augmentation.
+2. Related Work
+Transformers. Transformers [87], Ô¨Årst introduced for neural machine translation, have advanced the state-of-the-art in many natural language processing tasks [27, 79, 26]. Attention [2], as the core component of Transformers, was developed to capture both correspondence of tokens across modalities [2] and long-range interactions in a single context (self-attention) [22, 87]. Later, the complexity of transformer attention has been reduced [49, 90], by introducing local [68] or sparse attention [23], together with a global memory [6, 103, 31, 1]. The global memory, which inspires our dual-path transformer, recovers long-range context by propagating information globally.
+
+2
+
+Transformer and attention have been applied to computer vision as well, by combining non-local modules [91, 9] with CNNs or by applying self-attention only [72, 37, 89]. Both classes of methods have boosted various vision tasks such as image classiÔ¨Åcation [18, 5, 72, 37, 57, 89, 28], object detection [91, 80, 72, 36, 10, 108], semantic segmentation [15, 106, 39, 29, 109, 107], video recognition [91, 18], image generation [73, 35], and panoptic segmentation [89]. It is worth mentioning that DETR [10] stacked a transformer on top of a CNN for end-to-end object detection.
+Box-based panoptic segmentation. Most panoptic segmentation models, such as Panoptic FPN [47], follow a boxbased approach that detects object bounding boxes and predicts a mask for each box, usually with a Mask R-CNN [33] and FPN [58]. Then, the instance segments (‚Äòthing‚Äô) and semantic segments (‚Äòstuff‚Äô) [13] are fused by merging modules [54, 56, 74, 67, 101] to generate panoptic segmentation. For example, UPSNet [98] developed a parameter-free panoptic head, which facilitates uniÔ¨Åed training and inference [55]. Recently, DETR [10] extended box-based methods with its transformer-based end-to-end detector. And DetectoRS [76] advanced the state-of-the-art with recursive feature pyramid and switchable atrous convolution.
+Box-free panoptic segmentation. Contrary to box-based approaches, box-free methods typically start with semantic segments [12, 14, 16]. Then, instance segments are obtained by grouping ‚Äòthing‚Äô pixels with various methods, such as instance center regression [44, 86, 70, 100, 20], Watershed transform [88, 3, 8], Hough-voting [4, 53, 8], or pixel afÔ¨Ånity [45, 66, 81, 30, 8]. Recently, AxialDeepLab [89] advanced the state-of-the-art by equipping Panoptic-DeepLab [21] with a fully axial-attention [35] backbone. In this work, we extend Axial-DeepLab with a mask transformer for end-to-end panoptic segmentation.
+
+3. Method
+
+In this section, we describe how MaX-DeepLab directly predicts class-labeled masks for panoptic segmentation, followed by the PQ-style loss used to train the model. Then, we introduce our dual-path transformer architecture as well as the auxiliary losses that are helpful in training.
+
+3.1. MaX-DeepLab formulation
+
+The goal of panoptic segmentation is to segment the image I ‚àà RH√óW √ó3 into a set of class-labeled masks:
+
+{yi}Ki=1 = {(mi, ci)}Ki=1 .
+
+(1)
+
+The K ground truth masks mi ‚àà {0, 1}H√óW do not overlap
+
+with each other, i.e.,
+
+K i=1
+
+mi
+
+‚â§
+
+1H√óW
+
+,
+
+and
+
+ci
+
+denotes
+
+the
+
+ground truth class label of mask mi.
+
+Our MaX-DeepLab directly predicts outputs in the exact
+
+same form as the ground truth. MaX-DeepLab segments the
+
+image I into a Ô¨Åxed-size set of class-labeled masks:
+
+{yÀÜi}Ni=1 = {(mÀÜ i, pÀÜi(c))}Ni=1 .
+
+(2)
+
+The constant size N of the set is much larger than the typi-
+
+cal number of masks in an image [10]. The predicted masks
+
+mÀÜ i ‚àà [0, 1]H√óW are softly exclusive to each other, i.e.,
+
+N i=1
+
+mÀÜ i
+
+=
+
+1H√óW
+
+,
+
+and
+
+pÀÜi(c)
+
+denotes
+
+the
+
+probability
+
+of
+
+as-
+
+signing class c to mask mÀÜ i. Possible classes C c include
+
+thing classes, stuff classes, and a ‚àÖ class (no object). In this
+
+way, MaX-DeepLab deals with thing and stuff classes in a
+
+uniÔ¨Åed manner, removing the need for merging operators.
+
+Simple inference. End-to-end inference of MaX-DeepLab is enabled by adopting the same formulation for both ground truth deÔ¨Ånition and model prediction. As a result, the Ô¨Ånal panoptic segmentation prediction is obtained by simply performing argmax twice. SpeciÔ¨Åcally, the Ô¨Årst argmax predicts a class label for each mask:
+
+cÀÜi = arg max pÀÜi(c) .
+
+(3)
+
+c
+
+And the other argmax assigns a mask-ID zÀÜh,w to each pixel:
+
+zÀÜh,w = arg max mÀÜ i,h,w ,
+
+i
+
+(4)
+
+‚àÄh ‚àà {1, 2, . . . , H}, ‚àÄw ‚àà {1, 2, . . . , W } .
+
+In practice, we Ô¨Ålter each argmax with a conÔ¨Ådence threshold ‚Äì Masks or pixels with a low conÔ¨Ådence are removed as described in Sec. 4. In this way, MaX-DeepLab infers panoptic segmentation directly, dispensing with common manually-designed post-processing, e.g., NMS and thingstuff merging in almost all previous methods [47, 98]. Besides, MaX-DeepLab does not rely on hand-crafted priors such as anchors, object boxes, or instance mass centers, etc.
+
+3.2. PQ-style loss
+
+In addition to simple inference, MaX-DeepLab enables end-to-end training as well. In this section, we introduce how we train MaX-DeepLab with our PQ-style loss, which draws inspiration from the deÔ¨Ånition of panoptic quality (PQ) [48]. This evaluation metric of panoptic segmentation, PQ, is deÔ¨Åned as the multiplication of a recognition quality (RQ) term and a segmentation quality (SQ) term:
+
+PQ = RQ √ó SQ .
+
+(5)
+
+Based on this decomposition of PQ, we design our objective in the same manner: First, we deÔ¨Åne a PQ-style similarity metric between a class-labeled ground truth mask and a predicted mask. Next, we show how we match a predicted mask to each ground truth mask with this metric, and Ô¨Ånally how to optimize our model with the same metric.
+
+Mask similarity metric. Our mask similarity metric sim(¬∑, ¬∑) between a class-labeled ground truth mask yi = (mi, ci) and a prediction yÀÜj = (mÀÜ j, pÀÜj(c)) is deÔ¨Åned as
+
+sim(yi, yÀÜj) = pÀÜj(ci) √ó Dice(mi, mÀÜ j) ,
+
+(6)
+
+‚âà RQ
+
+‚âà SQ
+
+3
+
+where pÀÜj(ci) ‚àà [0, 1] is the probability of predicting the correct class (recognition quality) and Dice(mi, mÀÜ j) ‚àà [0, 1] is the Dice coefÔ¨Åcient between a predicted mask mÀÜ j and a ground truth mi (segmentation quality). The two terms are multiplied together, analogous to the decomposition of PQ.
+This mask similarity metric has a lower bound of 0, which means either the class prediction is incorrect, OR the two masks do not overlap with each other. The upper bound, 1, however, is only achieved when the class prediction is correct AND the mask is perfect. The AND gating enables this metric to serve as a good optimization objective for both model training and mask matching.
+
+Mask matching. In order to assign a predicted mask to
+each ground truth, we solve a one-to-one bipartite matching problem between the prediction set {yÀÜi}Ni=1 and the ground truth set {yi}Ki=1. Formally, we search for a permutation of N elements œÉ ‚àà SN that best assigns the predictions to achieve the maximum total similarity to the ground truth:
+
+K
+
+œÉÀÜ = arg max sim(yi, yÀÜœÉ(i)) .
+
+(7)
+
+œÉ‚ààSN i=1
+
+The optimal assignment is computed efÔ¨Åciently with the Hungarian algorithm [51], following prior work [10, 82]. We refer to the K matched predictions as positive masks which will be optimized to predict the corresponding ground truth masks and classes. The (N ‚àí K) masks left are negatives, which should predict the ‚àÖ class (no object).
+Our one-to-one matching is similar to DETR [10], but with a different purpose: DETR allows only one positive match in order to remove duplicated boxes in the absence of NMS, while in our case, duplicated or overlapping masks are precluded by design. But in our case, assigning multiple predicted masks to one ground truth mask is problematic too, because multiple masks cannot possibly be optimized to Ô¨Åt a single ground truth mask at the same time. In addition, our one-to-one matching is consistent with the PQ metric, where only one predicted mask can theoretically match (i.e., have an IoU over 0.5) with each ground truth mask.
+
+PQ-style loss. Given our mask similarity metric and the mask matching process based on this metric, it is straight forward to optimize model parameters Œ∏ by maximizing this same similarity metric over matched (i.e., positive) masks:
+
+K
+
+K
+
+max sim(yi, yÀÜœÉÀÜ(i)) ‚áî max
+
+sim(yi, yÀÜœÉ(i)) . (8)
+
+Œ∏ i=1
+
+Œ∏,œÉ‚ààSN i=1
+
+Substituting the similarity metric (Equ. (6)) gives our PQstyle objective OPpoQs to be maximized for positive masks:
+
+K
+
+max
+Œ∏
+
+OPpoQs
+
+=
+
+pÀÜœÉÀÜ(i)(ci) √ó Dice(mi, mÀÜ œÉÀÜ(i)) . (9)
+
+i=1
+
+‚âà RQ
+
+‚âà SQ
+
+In practice, we rewrite OPpoQs into two common loss terms by applying the product rule of gradient and then changing a probability pÀÜ to a log probability log pÀÜ. The change from pÀÜ to log pÀÜ aligns with the common cross-entropy loss and
+scales gradients better in practice for optimization:
+
+K
+LpPoQs = pÀÜœÉÀÜ(i)(ci) ¬∑
+i=1 weight
+
+‚àí Dice(mi, mÀÜ œÉÀÜ(i))
+Dice loss
+
+K
+
++ Dice(mi, mÀÜ œÉÀÜ(i)) ¬∑ ‚àí log pÀÜœÉÀÜ(i)(ci) ,
+
+i=1 weight
+
+Cross-entropy loss
+
+(10)
+
+where the loss weights are constants (i.e., no gradient is passed to them). This reformulation provides insights by bridging our objective with common loss functions: Our PQ-style loss is equivalent to optimizing a dice loss weighted by the class correctness and optimizing a crossentropy loss weighted by the mask correctness. The logic behind this loss is intuitive: we want both of the mask and class to be correct at the same time. For example, if a mask is far off the target, it is a false negative anyway, so we disregard its class. This intuition aligns with the down-weighting of class losses for wrong masks, and vice versa.
+Apart from the LpPoQs for positive masks, we deÔ¨Åne a cross-entropy term LnPeQg for negative (unmatched) masks:
+
+N
+
+LnPeQg =
+
+‚àí log pÀÜœÉÀÜ(i)(‚àÖ) .
+
+(11)
+
+i=K +1
+
+This term trains the model to predict ‚àÖ for negative masks. We balance the two terms by Œ±, as a common practice to
+
+weight positive and negative samples [59]:
+
+LPQ = Œ±LpPoQs + (1 ‚àí Œ±)LnPeQg ,
+
+(12)
+
+where LPQ denotes our Ô¨Ånal PQ-style loss.
+
+3.3. MaX-DeepLab Architecture
+
+As shown in Fig. 3, MaX-DeepLab architecture includes a dual-path transformer, a stacked decoder, and output heads that predict the masks and classes.
+
+Dual-path transformer. Instead of stacking a transformer on top of a CNN [10], we integrate the transformer and the CNN in a dual-path fashion, with bidirectional communication between the two paths. SpeciÔ¨Åcally, we augment a 2D pixel-based CNN with a 1D global memory of size N (i.e., the total number of predictions) and propose a transformer block as a drop-in replacement for any CNN block or an add-on for a pretrained CNN block. Our transformer block enables all four possible types of communication between the 2D pixel-path CNN and the 1D memorypath: (1) the traditional memory-to-pixel (M2P) attention, (2) memory-to-memory (M2M) self-attention, (3) pixel-tomemory (P2M) feedback attention that allows pixels to
+
+4
+
+Ì†µÌ∞ª Ì†µÌ±ä
+Ì†µÌ±Å Masks: Ì†µÌ±Å√ó 4 √ó 4
+
+Ì†µÌ±Å Classes: Ì†µÌ±Å√óÌ†µÌ∞∂
+
+¬∑ ¬∑ ¬∑ Dog Chair ¬∑ ¬∑ ¬∑
+
+Ì†µÌ∞ª Ì†µÌ±ä Ì†µÌ∞∑√ó √ó
+44
+
+Ì†µÌ±Å√óÌ†µÌ∞∑
+
+2FC
+
+1/4 Conv
+
+2FC
+
+1/8 Conv
+
+1/16 Dual-Path
+
+Ì†µÌ∞ø√ó
+
+Transformer
+
+Stacked Decoder
+
+Conv
+
+1/8
+
+Conv 1/4
+
+Conv 1/8
+
+Ì†µÌ±Ä√ó
+Conv
+
+FC
+FFN
+FC
+FC
+
+P2M
+
+M2P & M2M
+
+Attention Attention
+
+Ì†µÌ±û! Ì†µÌ±ò! Ì†µÌ±£! Ì†µÌ±£" Ì†µÌ±ò" Ì†µÌ±û"
+
+Dual-Path 1/16 Transformer
+
+Conv
+
+FC
+
+1/8 Conv 1/4 Conv
+
+Memory
+
+P2P AxialAttention
+
+Pixel Path
+
+Ì†µÌ∞ª√óÌ†µÌ±ä 2FC 2FC
+Ì†µ S D Ì†µ Ì±Å P Ì∞ø P Ì†µ t Ì†µ e √ó Ì∞∑ a Ì∞ª M i a √ó 1 c √ó x c 1 t / o k 1 e / Ì†µ Ì†µ 1 1 a 4 h d 1 e Ì∞ª / 1 Ì±ä 1 / 6 l s 4 6 / √ó e 4 d / k 8 8 r s Ì†µ 4 : Ì±ä C C C C Ì†µ C C C Ì±Å o o o o o o o √ó T T n n n n n n n r r D v D Ì†µ v v v 4 v v v a a Ì∞ª u u Ì†µ n n √ó Ì±Å ¬∑ a a 1 1 s √ó s ¬∑ 1 Ì†µ / l l / f f 4 - Ì†µ - 8 Ì±ä / ¬∑ o 8 o Ì∞∑ P P 4 r r a a m m D t t h Ì†µ h o e e M M Ì±Å g r r C e Ì†µ P e C l Ì±Å m a a m h √ó s t a o Ì†µ s h o Ì∞∂ i r e r r y s ¬∑ y : ¬∑
+
+¬∑
+
+Memory Path
+Ì†µ Ì†µÌ±û Ì±Ä A ! ( √ó t P P t P C P C e A ) a Ì†µ 2 o 2 o n t Ì±ò i t n M t x ! n P t h e v v e i n A o l t Ì†µ x n i Ì±£ i o ! a n l - M Ì†µÌ±£ A " 2 t P t ( e M Ì†µ & F F F F Ì±ò n C C C C " ) t P M i e o a Ì†µ 2 F m n t Ì±û F " M h o N r y
+
+(a) Overview of MaX-DeepLab
+
+(P) ixel Path
+
+(M) emory Path
+
+2FC 2FC
+Ì†µ S D Ì†µ Ì±Å P Ì∞ø P Ì†µ t Ì†µ e √ó Ì∞∑ a Ì∞ª M i a √ó 1 c √ó x c 1 t / o k 1 e / Ì†µ Ì†µ 1 1 a 4 h d 1 e Ì∞ª / 1 Ì±ä 1 / 6 l s 4 6 / √ó e 4 d / k 8 8 r s Ì†µ 4 : Ì±ä C C C C Ì†µ C C C Ì±Å o o o o o o o √ó T T n n n n n n n r r D v D Ì†µ v v v 4 v v v a a Ì∞ª u u Ì†µ n n √ó Ì±Å ¬∑ a a 1 1 s √ó s ¬∑ 1 Ì†µ / l l / f f 4 - Ì†µ - 8 Ì±ä / ¬∑ o 8 o Ì∞∑ P P 4 r r a a m m D t t h Ì†µ h o e e M M Ì±Å g r r C e Ì†µ P e C l Ì±Å m a a m h √ó s t a o Ì†µ s h o Ì∞∂ i r e r r y s ¬∑ y : ¬∑
+
+¬∑
+
+Ì†µ Ì†µÌ±û Ì±Ä A ! ( √ó t P P t P C P C e A ) a Ì†µ 2 o 2 o n t Ì±ò i t n M t x ! n P t h e v v e i n A o l t Ì†µ x n i Ì±£ i o ! a n l - M Ì†µÌ±£ A " 2 t P t ( e M Ì†µ & F F F F Ì±ò n C C C C " ) t P M i e o a Ì†µ 2 F m n t Ì±û F " M h o N r y
+
+(b) Dual-path transformer block
+
+Figure 3. (a) An image and a global memory are fed into a dualpath transformer, which directly predicts a set of masks and classes (residual connections omitted). (b) A dual-path transformer block is equipped with all 4 types of attention between the two paths.
+
+read from the memory, and (4) pixel-to-pixel (P2P) self-
+attention, implemented as axial-attention blocks [39, 35,
+89]. We select axial-attention [89] rather than global 2D at-
+tention [10, 91, 5] for efÔ¨Åciency on high resolution feature
+maps. One could optionally approximate the pixel-to-pixel
+self-attention with a convolutional block that only allows lo-
+cal communication. This transformer design with a memory
+path besides the main CNN path is termed dual-path trans-
+former. Unlike previous work [10], it allows transformer
+blocks to be inserted anywhere in the backbone at any reso-
+lution. In addition, the P2M feedback attention enables the
+pixel-path CNN to reÔ¨Åne its feature given the memory-path
+features that encode mask information. Formally, given a 2D input feature xp ‚àà RHÀÜ √óWÀÜ √ódin
+with height HÀÜ , width WÀÜ , channels din, and a 1D global memory feature xm ‚àà RN√ódin with length N (i.e., the size of the prediction set). We compute pixel-path queries qp, keys kp, and values vp, by learnable linear projections of the pixel-path feature map xp at each pixel. Similarly, qm, km, vm are computed from xm with another set of projection
+matrices. The query (key) and value channels are dq and dv, for both paths. Then, the output of feedback attention (P2M), yap ‚àà Rdout , at pixel position a, is computed as
+
+N
+
+yap = softmaxn (qap ¬∑ knm) vnm ,
+
+(13)
+
+n=1
+
+where the softmaxn denotes a softmax function applied to the whole memory of length N . Similarly, the output
+
+of memory-to-pixel (M2P) and memory-to-memory (M2M) attention ybm ‚àà Rdout , at memory position b, is
+
+HÀÜ WÀÜ +N
+
+ybm =
+
+softmaxn (qbm ¬∑ knpm) vnpm ,
+
+n=1
+
+(14)
+
+kpm =
+
+kp km
+
+,
+
+vpm =
+
+vp vm
+
+,
+
+where the softmax is performed over the concatenated dimension of size (HÀÜ WÀÜ + N ).
+
+Stacked decoder. Unlike previous work [21, 89] that uses a light-weight decoder, we explore stronger hourglass-style stacked decoders [78, 71, 19]. As shown in Fig. 3, our decoder is stacked L times, traversing output strides (4, 8, and 16 [16, 61]) multiple times. At each decoding resolution, features are fused by simple summation after bilinear resizing. Then, convolutional blocks or transformer blocks are applied, before the decoder feature is sent to the next resolution. This stacked decoder is similar to feature pyramid networks [58, 63, 84, 76] designed for pyramidal anchor predictions [64], but our purpose here is only to aggregate multi-scale features, i.e., intermediate pyramidal features are not directly used for prediction.
+
+Output heads. From the memory feature of length N ,
+
+we predict mask classes pÀÜ(c) ‚àà RN√ó|C| with two fully-
+
+connected layers (2FC) and a softmax. Another 2FC head
+
+predicts mask feature f ‚àà RN√óD. Similarly, we employ
+
+two convolutions (2Conv) to produce a normalized feature
+
+g
+
+‚àà
+
+RD√ó
+
+H 4
+
+√ó
+
+W 4
+
+from the decoder output at stride 4.
+
+Then,
+
+our mask prediction mÀÜ is simply the multiplication of trans-
+
+former feature f and decoder feature g:
+
+mÀÜ
+
+=
+
+softmaxN
+
+(f
+
+¬∑ g)
+
+‚àà
+
+RN
+
+√ó
+
+H 4
+
+√ó
+
+W 4
+
+.
+
+(15)
+
+In practice, we use batch norm [41] on f and (f ¬∑ g) to avoid deliberate initialization, and we bilinear upsample the mask prediction mÀÜ to the original image resolution. Finally, the combination {(mÀÜ i, pÀÜi(c))}Ni=1 is our mask transformer output to generate panoptic results as introduced in Sec. 3.1.
+Our mask prediction head is inspired by CondInst [85] and SOLOv2 [92], which extend dynamic convolution [43, 99] to instance segmentation. However, unlike our end-toend method, these methods require hand-designed object centers and assignment rules for instance segmentation, and a thing-stuff merging module for panoptic segmentation.
+
+3.4. Auxiliary losses
+
+In addition to the PQ-style loss (Sec. 3.2), we Ô¨Ånd it beneÔ¨Åcial to incorporate auxiliary losses in training. SpeciÔ¨Åcally, we propose a pixel-wise instance discrimination loss that helps cluster decoder features into instances. We also use a per-pixel mask-ID cross-entropy loss that classiÔ¨Åes each pixel into N masks, and a semantic segmentation loss.
+
+5
+
+Our total loss function thus consists of the PQ-style loss LPQ and these three auxiliary losses.
+
+Instance discrimination. We use a per-pixel instance dis-
+
+crimination loss to help the learning of the feature map
+
+g
+
+‚àà
+
+RD√ó
+
+H 4
+
+√ó
+
+W 4
+
+.
+
+Given
+
+a
+
+downsampled
+
+ground
+
+truth
+
+mask
+
+mi
+
+‚àà
+
+{0,
+
+H
+1} 4
+
+√ó
+
+W 4
+
+,
+
+we
+
+Ô¨Årst
+
+compute
+
+a
+
+normalized
+
+feature
+
+embedding ti,: ‚àà RD for each annotated mask by averaging
+
+the feature vectors g:,h,w inside the mask mi:
+
+ti,: = ||
+
+h,w mi,h,w ¬∑ g:,h,w , i = 1, 2, . . . , K . h,w mi,h,w ¬∑ g:,h,w||
+
+(16)
+
+This gives us K instance embeddings {ti,:}Ki=1 representing K ground truth masks. Then, we let each pixel feature g:,h,w perform an instance discrimination task, i.e., each pixel should correctly identify which mask embedding (out of K) it belongs to, as annotated by the ground truth masks. The contrastive loss at a pixel (h, w) is written as:
+
+LIhn,wstDis = ‚àí log
+
+K i=1
+
+mi,h,w exp (ti,: ¬∑ g:,h,w/œÑ )
+
+K i=1
+
+exp
+
+(ti,:
+
+¬∑
+
+g:,h,w/œÑ )
+
+,
+
+(17)
+
+where œÑ denotes the temperature, and note that mi,h,w is non-zero only when pixel (h, w) belongs to the ground truth
+
+mask mi. In practice, this per-pixel loss is applied to all in-
+
+stance pixels in an image, encouraging features from the
+
+same instance to be similar and features from different in-
+
+stances to be distinct, in a contrastive fashion, which is ex-
+
+actly the property required for instance segmentation.
+
+Our instance discrimination loss is inspired by previous
+
+works [96, 94, 40, 17, 32, 46]. However, they discriminate
+
+instances either unsupervisedly or with image classes [46],
+
+whereas we perform a pixel-wise instance discrimination
+
+task, as annotated by panoptic segmentation ground truth.
+
+Mask-ID cross-entropy. In Equ. (4), we describe how we infer the mask-ID map given our mask prediction. In fact, we can train this per-pixel classiÔ¨Åcation task by applying a cross-entropy loss on it. This is consistent with the literature [42, 83, 10] that uses a cross-entropy loss together with a dice loss [69] to learn better segmentation masks.
+
+Semantic segmentation. We also use an auxiliary semantic segmentation loss to help capture per pixel semantic feature. SpeciÔ¨Åcally, we apply a semantic head [21] on top of the backbone if no stacked decoder is used (i.e., L = 0). Otherwise, we connect the semantic head to the Ô¨Årst decoder output at stride 4, because we Ô¨Ånd it helpful to separate the Ô¨Ånal mask feature g with semantic segmentation.
+
+4. Experiments
+We report our main results on COCO, comparing with state-of-the-art methods. Then, we provide a detailed ablation study on the architecture variants and losses. Finally, we analyze how MaX-DeepLab works with visualizations.
+
+Technical details. Most of our default settings follow Axial-DeepLab [89]. SpeciÔ¨Åcally, we train our models with 32 TPU cores for 100k (400k for main results) iterations (54 epochs), a batch size of 64, Radam [62] Lookahead [104], a ‚Äòpoly‚Äô schedule learning rate of 10‚àí3 (3 √ó 10‚àí4 for MaX-DeepLab-L), a backbone learning rate multiplier of 0.1, a weight decay of 10‚àí4, and a drop path rate [38] of 0.2. We resize and pad images to 641 √ó 641 [21, 89] (1025 √ó 1025 for main results) for inference and M-Adds calculation. During inference, we set masks with class conÔ¨Ådence below 0.7 to void and Ô¨Ålter pixels with mask-ID conÔ¨Ådence below 0.4. Finally, following previous work [98, 21, 89], we Ô¨Ålter stuff masks with an area limit of 4096 pixels, and instance masks with a limit of 256 pixels. In training, we set our PQ-style loss weight (Equ. (12), normalized by N ) to 3.0, with Œ± = 0.75. Our instance discrimination uses œÑ = 0.3, and a weight of 1.0. We set the mask-ID crossentropy weight to 0.3, and semantic segmentation weight to 1.0. We use an output size N = 128 and D = 128 channels (more details and architectures in Sec. A.5).
+4.1. Main results
+We present our main results on COCO val set and testdev set [60], with a small model, MaX-DeepLab-S, and a large model, MaX-DeepLab-L.
+MaX-DeepLab-S augments ResNet-50 [34] with axialattention blocks [89] in the last two stages. After pretaining, we replace the last stage with dual-path transformer blocks and use an L = 0 (not stacked) decoder. We match parameters and M-Adds to DETR-R101 [10], for fair comparison.
+MaX-DeepLab-L stacks an L = 2 decoder on top of Wide-ResNet-41 [102, 95, 11]. And we replace all stride 16 residual blocks by our dual-path transformer blocks with wide axial-attention blocks [89]. This large variant is meant to be compared with state-of-the-art results.
+Val set. In Tab. 2, we report our validation set results and compare with both box-based and box-free panoptic segmentation methods. As shown in the table, our single-scale MaX-DeepLab-S already outperforms all other box-free methods by a large margin of more than 4.5 % PQ, no matter whether other methods use test time augmentation (TTA, usually Ô¨Çipping and multi-scale) or not. SpeciÔ¨Åcally, it surpasses single-scale Panoptic-DeepLab by 8.7% PQ, and single-scale Axial-DeepLab by 5.0% PQ with similar MAdds. We also compare MaX-DeepLab-S with DETR [10], which is based on an end-to-end detector, in a controlled environment of similar number of parameters and M-Adds. Our MaX-DeepLab-S outperforms DETR [10] by 3.3% PQ in this fair comparison. Next, we scale up MaX-DeepLab to a wider variant with stacked decoder, MaX-DeepLab-L. This scaling further improves the single-scale performance to 51.1% PQ, outperforming multi-scale Axial-DeepLab [89] by 7.2% PQ with similar inference M-Adds.
+
+6
+
+Method
+
+Backbone TTA Params M-Adds PQ PQTh PQSt
+
+Box-based panoptic segmentation methods
+
+Panoptic-FPN [47] UPSNet [98] Detectron2 [93] UPSNet [98] DETR [10]
+
+RN-101 RN-50 RN-101 RN-50 RN-101
+
+40.3 47.5 29.5
+
+42.5 48.5 33.4
+
+43.0 - -
+
+
+
+43.2 49.1 34.1
+
+61.8M 314B1 45.1 50.5 37.0
+
+Box-free panoptic segmentation methods
+
+Panoptic-DeepLab [21] X-71 [24]
+
+46.7M 274B 39.7 43.9 33.2
+
+Panoptic-DeepLab [21] X-71 [24]  46.7M 3081B 41.2 44.9 35.7
+
+Axial-DeepLab-L [89] -
+
+44.9M 344B 43.4 48.5 35.6
+
+Axial-DeepLab-L [89] -
+
+ 44.9M 3868B 43.9 48.6 36.8
+
+MaX-DeepLab-S
+
+-
+
+61.9M 324B 48.4 53.0 41.5
+
+MaX-DeepLab-L
+
+-
+
+451M 3692B 51.1 57.0 42.2
+
+Table 2. COCO val set. TTA: Test-time augmentation
+
+Method
+
+Backbone TTA PQ PQTh PQSt
+
+Box-based panoptic segmentation methods
+
+Panoptic-FPN [47] DETR [10] UPSNet [98] DetectoRS [76]
+
+RN-101
+
+40.9 48.3 29.7
+
+RN-101
+
+46.0 - -
+
+DCN-101 [25]  46.6 53.2 36.7
+
+RX-101 [97]  49.6 57.8 37.1
+
+Box-free panoptic segmentation methods
+
+Panoptic-DeepLab [21] X-71 [24, 75]  41.4 45.1 35.9
+
+Axial-DeepLab-L [89]
+
+-
+
+43.6 48.9 35.6
+
+Axial-DeepLab-L [89]
+
+-
+
+ 44.2 49.2 36.8
+
+MaX-DeepLab-S
+
+-
+
+49.0 54.0 41.6
+
+MaX-DeepLab-L
+
+-
+
+51.3 57.2 42.4
+
+Table 3. COCO test-dev set. TTA: Test-time augmentation
+
+Test-dev set. Our improvements on the val set transfers well to the test-dev set, as shown in Tab. 3. On the test-dev set, we are able to compare with more competitive methods and stronger backbones equipped with group convolution [50, 97], deformable convolution [25], or recursive backbone [65, 76], while we do not use these improvements in our model. In the regime of no TTA, our MaXDeepLab-S outperforms Axial-DeepLab [89] by 5.4% PQ, and DETR [10] by 3.0% PQ. Our MaX-DeepLab-L without TTA further attains 51.3% PQ, surpassing Axial-DeepLab with TTA by 7.1% PQ. This result also outperforms the best box-based method DetectoRS [76] with TTA by 1.7% PQ, closing the large gap between box-based and box-free methods on COCO for the Ô¨Årst time. Our MaX-DeepLab sets a new state-of-the-art on COCO, even without using TTA.
+4.2. Ablation study
+In this subsection, we provide more insights by teasing apart the effects of MaX-DeepLab components on the val set. We Ô¨Årst deÔ¨Åne a default baseline setting and then vary each component of it: We augment Wide-ResNet-41 [102,
+1https://github.com/facebookresearch/detr
+
+Res Axial L Iter Params M-Adds PQ PQTh PQSt
+641  0 100k 196M 746B 45.7 49.8 39.4 641  0 100k 277M 881B 47.8 51.9 41.5 1025  0 100k 196M 1885B 46.1 50.7 39.1 1025  0 100k 277M 2235B 49.4 54.5 41.8
+641  1 100k 271M 1085B 47.1 51.6 40.3 641  2 100k 347M 1425B 47.5 52.3 40.2
+641  0 200k 196M 746B 46.9 51.5 40.0 641  0 400k 196M 746B 47.7 52.5 40.4
+
+Table 4. Scaling MaX-DeepLab by using a larger input Resolution, replacing convolutional blocks with Axial-attention blocks, stacking decoder L times, and training with more Iterations.
+
+P2M M2M Stride
+
+Params M-Adds PQ PQTh PQSt
+
+  16
+
+ 16
+
+
+
+16
+
+16
+
+196M 188M 196M 186M
+
+746B 732B 746B 731B
+
+45.7 49.8 39.4 45.0 48.9 39.2 45.1 49.3 38.9 44.7 48.5 39.0
+
+  16 & 8
+
+220M 768B 46.7 51.3 39.7
+
+  16 & 8 & 4 234M 787B 46.3 51.1 39.0
+
+Table 5. Varying transformer P2M feedback attention, M2M selfattention, and the Stride where we apply the transformer.
+
+95, 11] by applying dual-path transformer to all blocks at stride 16, enabling all four types of attention. For faster wall-clock training, we use an L = 0 (not stacked) decoder and approximate P2P attention with convolutional blocks.
+Scaling. We Ô¨Årst study the scaling of MaX-DeepLab in Tab. 4. We notice that replacing convolutional blocks with axial-attention blocks gives the most improvement. Further changing the input resolution to 1025 √ó 1025 improves the performance to 49.4% PQ, with a short 100k schedule (54 epochs). Stacking the decoder L = 1 time improves 1.4% PQ, but further scaling to L = 2 starts to saturate. Training with more iterations helps convergence, but we Ô¨Ånd it not as necessary as DETR which is trained for 500 epochs.
+Dual-path transformer. Next, we vary attention types of our dual-path transformer and the stages (strides) where we apply transformer blocks. Note that we always apply M2P attention that attaches the transformer to the CNN. And P2P attention is already ablated above. As shown in Tab. 5, removing our P2M feedback attention causes a drop of 0.7% PQ. On the other hand, we Ô¨Ånd MaX-DeepLab robust (0.6% PQ) to the removal of M2M self-attention. We attribute this robustness to our non-overlapping mask formulation. Note that DETR [10] relies on M2M self-attention to remove duplicated boxes. In addition, it is helpful (+1.0% PQ) to apply transformer blocks to stride 8 also, which is impossible for DETR without our dual-path design. Pushing it further to stride 4 does not show more improvements.
+
+7
+
+PQ (%) Confidence
+Dice Accuracy (%) Accuracy (%)
+
+0.5 0.4
+0.2
+0.0 0 20 40 60 80 100 Steps (k)
+
+0.8 0.6 0.4 0.2 0.0 0 20 40 60 80 100
+Steps (k)
+
+0.8 0.6 0.4 0.2 0.0 0 20 40 60 80 100
+Steps (k)
+
+100 75 50 25 0 0 20 40 60 80 100
+Steps (k)
+
+100 75 50 25 0 0 20 40 60 80 100
+Steps (k)
+
+(a) Validation PQ
+
+(b) Matched class conÔ¨Ådence (c) Matched mask dice (d) Instance discrimination (e) Mask-ID prediction
+
+Figure 4. Training curves for (a) validation PQ, (b) average class conÔ¨Ådence, pÀÜœÉÀÜ(i)(ci), of matched masks, (c) average mask dice, Dice(mi, mÀÜ œÉÀÜ(i)), of matched masks, (d) per-pixel instance discrimination accuracy, and (e) per-pixel mask-ID prediction accuray.
+
+sim InstDis Mask Sem PQ PQTh PQSt SQ RQ
+
+RQ √ó SQ  RQ + SQ 
+
+  45.7 49.8 39.4 80.9 55.3   44.9 48.6 39.3 80.2 54.5
+
+RQ √ó SQ  
+
+RQ √ó SQ
+
+
+
+RQ √ó SQ 
+
+RQ √ó SQ
+
+45.1 50.1 37.6 80.6 54.5 43.3 46.4 38.6 80.1 52.6 42.6 48.1 34.1 80.0 52.0 39.5 41.8 36.1 78.9 49.0
+
+Table 6. Varying the similarity metric sim and whether to apply the auxiliary Instance Discrimination loss, Mask-ID crossentropy loss or the Semantic segmentation loss.
+
+Loss ablation. Finally, we ablate our PQ-style loss and auxiliary losses in Tab. 6. We Ô¨Årst switch our PQ-style similarity in Equ. (6) from RQ √ó SQ to RQ + SQ, which differs in the hungarian matching (Equ. (7)) and removes dynamic loss weights in Equ. (10). We observe that RQ + SQ works reasonably well, but RQ √ó SQ improves 0.8% PQ on top of it, conÔ¨Årming the effect of our PQ-style loss in practice, besides its conceptual soundness. Next, we vary auxiliary losses applied to MaX-DeepLab, without tuning loss weights for remaining losses. Our PQ-style loss alone achieves a reasonable performance of 39.5% PQ. Adding instance discrimination signiÔ¨Åcantly improves PQTh, showing the importance of a clustered feature embedding. MaskID prediction shares the same target with the Dice term in Equ. (10), but helps focus on large masks when the Dice term is overwhelmed by small objects. Combining both of the auxiliary losses leads to a large 5.6% PQ gain. Further multi-tasking with semantic segmentation improves 0.6% PQ, because its class-level supervision helps stuff classes but not instance-level discrimination for thing classes.
+4.3. Analysis
+We provide more insights of MaX-DeepLab by reporting our training curves. We also visualize the mask prediction head for more intuition.
+Training curves. We Ô¨Årst report the validation PQ curve in Fig. 4(a), with our default ablation model. MaX-DeepLab converges quickly to around 46% PQ within 100k iterations (54 epochs), 1/10 of DETR [10]. In Fig. 4(b) and Fig. 4(c), we plot the characteristics of all matched masks in an image.
+
+Dog (thing) Chair (thing) Dining-table (thing) Cake (thing) Wall (stuff)
+No object
+(a) Original image (b) Decoder feature g (c) Transformer output
+Figure 5. (b) Pixels of the same instance have similar colors (features), while pixels of different instances have distinct colors. (c) The transformer predicts mask colors (features) and classes.
+The matched masks tend to have a better class correctness than mask correctness. Besides, we report per-pixel accuracies for instance discrimination (Fig. 4(d)) and mask-ID prediction (Fig. 4(e)). We see that most pixels learn quickly to Ô¨Ånd their own instances (out of K) and predict their own mask-IDs (out of N ). Only 10% of all pixels predict wrong mask-IDs, but they contribute to most of the PQ error.
+Visualization. In order to intuitively understand the normalized decoder output g, the transformer mask feature f , and how they are multiplied to generate our mask output mÀÜ , we train a MaX-DeepLab with D = 3 and directly visualize the normalized features as RGB colors. As shown in Fig. 5, the decoder feature g assigns similar colors (or feature vectors) to pixels of the same mask, no matter the mask is a thing or stuff, while different masks are colored differently. Such effective instance discrimination (as colorization) facilitates our simple mask extraction with an inner product.
+5. Conclusion
+In this work, we have shown for the Ô¨Årst time that panoptic segmentation can be trained end-to-end. Our MaXDeepLab directly predicts masks and classes with a mask transformer, removing the needs for many hand-designed priors such as object bounding boxes, thing-stuff merging, etc. Equipped with a PQ-style loss and a dual-path transformer, MaX-DeepLab achieves the state-of-the-art result on the challenging COCO dataset, closing the gap between box-based and box-free methods for the Ô¨Årst time.
+Acknowledgments. We would like to thank Maxwell Collins and Sergey Ioffe for their feedbacks on the pa-
+
+‚Ä¶ ‚Ä¶
+
+8
+
+per, Jiquan Ngiam for Hungarian Matching implementation, Siyuan Qiao for DetectoRS segmentation results, Chen Wei for instance discrimination insights, Jieneng Chen for dice loss comments and the support from Google Mobile Vision.
+A. Appendix
+A.1. Panoptic Segmentation Results
+Similar to the case study in Fig. 2, we provide more panoptic segmentation results of our MaX-DeepLab-L and compare them to the state-of-the-art box-free method, Axial-DeepLab [89], the state-of-the-art box-based method, DetectoRS [76], and the Ô¨Årst Detection Transformer, DETR [10] in Fig. A.1. MaX-DeepLab-L demonstrates robustness to the challenging cases of similar object bounding boxes and nearby objects with close centers, while other methods make systematic mistakes because of their individual surrogate sub-task design. MaX-DeepLab-L also shows exceptional mask quality, and performs well in the cases of many small objects.
+A.2. Mask Output Slot Analysis
+In this subsection, we analyze the statistics of all N = 128 mask prediction slots using MaX-DeepLab-L. In Fig. A.2, we visualize the joint distribution of mask slot Ô¨Årings and the classes they predict. We observe that the mask slots have imbalanced numbers of predictions and they specialize on ‚Äòthing‚Äô classes and ‚Äòstuff‚Äô classes. Similar to this Mask-Class joint distribution, we visualize the Mask-Pixel joint distribution by extracting an average mask for each mask slot, as shown in Fig. A.3. SpeciÔ¨Åcally, we resize all COCO [60] validation set panoptic segmentation results to a unit square and take an average of masks that are predicted by each mask slot. We split all mask slots into three categories according to their total Ô¨Årings and visualize mask slots in each category. We observe that besides the classlevel specialization, our mask slots also specialize on certain regions of an input image. This observation is similar to DETR [10], but we do not see the pattern that almost all slots have a mode of predicting large image-wide masks.
+A.3. Mask Head Visualization
+In Fig. 5, we visualize how the mask head works by training a MaX-DeepLab with only D = 3 decoder feature channels (for visualization purpose only). Although this extreme setting degrades the performance from 45.7% PQ to 37.8% PQ, it enables us to directly visualize the decoder features as RGB colors. Here in Fig. A.4 we show more examples using this model, together with the corresponding panoptic sementation results. We see a similar clustering effect of instance colors, which enables our simple mask extraction
+
+with just a matrix multiplication (a.k.a. dynamic convolution [85, 92, 43, 99]).
+A.4. Transformer Attention Visualization
+We also visualize the M2P attention that connects the transformer to the CNN. SpeciÔ¨Åcally, given an input image from COCO validation set, we Ô¨Årst select four output masks of interest from the MaX-DeepLab-L panoptic prediction. Then, we probe the attention weights between the four masks and all the pixels, in the last dual-path transformer block. Finally, we colorize the four attention maps with four colors and visualize them in one Ô¨Ågure. This process is repeated for two images and all eight attention heads as shown in Fig. A.5. We omit our results for the Ô¨Årst transformer block since it is mostly Ô¨Çat. This is expected because the memory feature in the Ô¨Årst transformer block is unaware of the pixel-path input image at all. Unlike DETR [10] which focuses on object extreme points for detecting bounding boxes, our MaX-DeepLab attends to individual object (or stuff) masks. This mask-attending property makes MaX-DeepLab relatively robust to nearby objects with similar bounding boxes or close mass centers.
+A.5. More Technical Details
+In Fig. A.6, Fig. A.7, and Fig. A.8, we include more details of our MaX-DeepLab architectures. As marked in the Ô¨Ågure, we pretrain our model on ImageNet [50]. The pretraining model uses only P2P attention (could be a convolutional residual block or an axial-attention block), without the other three types of attention, the feed-forward network (FFN), or the memory. We directly pretrain with an average pooling followed by a linear layer. This pretrained model is used as a backbone for panoptic segmentation, and it uses the backbone learning rate multiplier we mentioned in Sec. 4. After pretraining the CNN path, we apply (with random initialization) our proposed memory path, including the memory, the three types of attention, the FFNs, the decoding layers, and the output heads for panoptic segmentation. In addition, we employ multi-head attention with 8 heads for all attention operations. In MaX-DeepLab-L, we use shortcuts in the stacked decoder. SpeciÔ¨Åcally, each decoding stage (resolution) is connected to the nearest two previous decoding stage outputs of the same resolution.
+
+9
+
+Original Image
+
+MaX-DeepLab-L Axial-DeepLab [89]
+
+Mask Transformer 51.1% PQ
+
+Box-Free 43.4% PQ
+
+DetectoRS [76]
+Box-Based 48.6% PQ
+
+DETR [10]
+Box Transformer 45.1% PQ
+
+Ground Truth
+
+MaX-DeepLab segments the baby with its occluded leg correctly. DetectoRS and DETR merge the two people into one instance, probably because the two people have similar bounding boxes. In addition, DETR introduces artifacts around the head of the horse.
+
+MaX-DeepLab correctly segments all the boards, the zebras, and the people. All other methods fail in these challenging cases of similar bounding boxes and nearby object centers.
+MaX-DeepLab generates a high quality mask for the cat, arguably better than the ground truth. Axial-DeepLab predicts cat pixels on the right of the image, as the center of the cat is close to the center of the bike. And DETR misses the cat and introduces artifacts.
+
+MaX-DeepLab also performs well in the presence of many small instances. Figure A.1. Comparing MaX-DeepLab with other representative methods on the COCO val set. (Colors modiÔ¨Åed for better visualization).
+10
+
+Mask Slot ID
+
+128
+96
+64
+32
+1 1 20 40 60 80 100 120 133
+Class ID
+Figure A.2. The joint distribution for our N = 128 mask slots and 133 classes with 80 ‚Äòthing‚Äô classes on the left and 53 ‚Äòstuff‚Äô classes on the right. We observe that a few mask slots predict a lot of the masks. Some mask slots are used less frequently, probably only when there are a lot of objects in one image. Some other slots do not Ô¨Åre at all. In addition, we see automatic functional segregation between ‚Äòthing‚Äô mask slots and ‚Äòstuff‚Äô mask slots, with a few exceptions that can predict both thing and stuff masks.
+Mask Slot 71 Mask Slot 106 Mask Slot 125 Mask Slot 69 Mask Slot 116 Mask Slot 4 Mask Slot 27 Mask Slot 103 Most Firings (sorted)
+Mask Slot 84 Mask Slot 67 Mask Slot 23 Mask Slot 101 Mask Slot 127 Mask Slot 28 Mask Slot 105 Mask Slot 122 Medium Firings (sorted)
+Mask Slot 25 Mask Slot 66 Mask Slot 98 Mask Slot 110 Mask Slot 63 Mask Slot 95 Mask Slot 40 Mask Slot 79 Few Firings (sorted)
+Figure A.3. The average masks that each mask slot predicts, normalized by image shape. Mask slots are categorized by their total number of Ô¨Årings and sorted from most Ô¨Årings to few Ô¨Årings. We observe spatial clustered patterns, meaning that the mask slots specialize on certain regions of an input image. For example, the most Ô¨Åring mask slot 71, focusing on the center of an image, predicts almost all 80 ‚Äòthing‚Äô classes but ignores ‚Äòstuff‚Äô classes (Fig. A.2). The top three categories are tennis rackets, cats, and dogs. The second Ô¨Åring mask slot 106 segments 14 classes of masks on the bottom of an image, such as road, Ô¨Çoor, or dining-tables. The third Ô¨Åring mask slot 125 concentrates 99.9% on walls or trees that are usually on the top of an image. The fourth Ô¨Åring mask slot 69 focuses entirely on the person class and predicts 2663 people in the 5000 validation images.
+11
+
+Original Image Decoder Feature g Panoptic Seg.
+
+Original Image Decoder Feature g Panoptic Seg.
+
+Figure A.4. More visualizations of the decoder feature g with D = 3. Similar to Fig. 5, we observe a clustering effect of instance colors, i.e., pixels of the same instance have similar colors (features) while pixels of different instances have distinct colors. Note that in this extreme case of D = 3 (that achieves 37.8% PQ), there are not enough colors for all masks, which causes missing objects or artifacts at object boundaries, but these artifacts do not present in our normal setting of D = 128 (that achieves 45.7% PQ).
+
+12
+
+Original Image
+
+Head 1
+
+Head 2
+
+Head 3
+
+Head 4
+
+Panoptic Segmentation
+
+Head 5
+
+Head 6
+
+Head 7
+
+Head 8
+
+Attention maps for three people (left, middle, right) on a playing Ô¨Åeld.
+
+Original Image
+
+Head 1
+
+Head 2
+
+Head 3
+
+Head 4
+
+Panoptic Segmentation
+
+Head 5
+
+Head 6
+
+Head 7
+
+Head 8
+
+Attention maps for two people (woman, man) cutting a cake on a table. Figure A.5. Visualizing the transformer M2P attention maps for selected predicted masks. We observe that head 2, together with head 5, 7, and 8, mainly attends to the output mask regions. Head 1, 3, and 4 gather more context from broader regions, such as semantically-similar instances (scene 1 head 1) or mask boundaries (scene 2 head 4). In addition, we see that head 6 does not pay much attention to the pixelpath, except for some minor Ô¨Årings on the playing Ô¨Åeld and on the table. Instead, it focuses more on M2M self-attention which shares the same softmax with M2P attention (Equ. (14)).
+13
+
+Ì†µÌ≤ô
+
+Ì†µÌ≤ö
+
+Ì†µÌ≤õ
+
+Conv 1√ó1
+
+Concat
+
+Concat
+
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó128
+
+(Ì†µÌ∞ª√óÌ†µÌ±ä√ó16)√ó8
+
+Multi-Head Attention Ì†µÌ∞ª√óÌ†µÌ±ä√ó128
+
+Height-Axis
+
+(Ì†µÌ∞ª√óÌ†µÌ±ä√ó16)√ó8 Multi-Head Attention Ì†µÌ∞ª√óÌ†µÌ±ä√ó128
+Width-Axis
+
+Conv 1√ó1
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó256
+
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó256
+
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó256
+
+Figure A.6. An example Axial-Block from Axial-DeepLab [89]. This axial-attention bottleneck block consists of two axial-attention layers
+
+operating along height- and width-axis sequentially.
+
+Output: ! √ó # √ó128
+""
+
+Output: Ì†µÌ∞ª√óÌ†µÌ±ä√óÌ†µÌ∞∂
+
+128 Max pool 3 x 3
+
+Ì†µÌ∞∂
+
+stride 2 128
+
+Conv 1 x 1
+
+Output: Ì†µÌ∞ª√óÌ†µÌ±ä√óÌ†µÌ∞∂
+
+Conv 3 x 3 64
+
+Ì†µÌ∞∂/4 Conv 3 x 3
+
+Conv 3x3
+
+Conv 3 x 3
+64 Conv 3 x 3, stride 2
+
+Ì†µÌ∞∂/4 Conv 1 x 1
+
+Conv 3x3
+
+Image: Ì†µÌ∞ª√óÌ†µÌ±ä√ó3 3 Input: Ì†µÌ∞ª√óÌ†µÌ±ä√óÌ†µÌ∞∂
+
+Input: Ì†µÌ∞ª√óÌ†µÌ±ä√óÌ†µÌ∞∂
+
+Output: Ì†µÌ∞ª√óÌ†µÌ±ä√óÌ†µÌ∞∂
+Ì†µÌ∞∂ Conv 1 x 1
+
+Ì†µÌ∞∂
+
+Ì†µÌ∞∂/2
+
+Conv 3 x 3
+
+Ì†µÌ∞∂
+
+Ì†µÌ∞∂/4
+
+Conv 1 x 1
+
+Input: Ì†µÌ∞ª√óÌ†µÌ±ä√óÌ†µÌ∞∂
+
+(a) Inception Stem
+
+(b) Bottleneck block
+
+(c) Wide-Basic block
+
+(d) Wide-Bottle block
+
+Figure A.7. Building blocks for our MaX-DeepLab architectures.
+
+14
+
+Ì†µÌ±Å
+
+Masks:
+
+Ì†µÌ±Å√ó
+
+Ì†µÌ∞ª 4
+
+√ó
+
+Ì†µÌ±ä 4
+
+¬∑ ¬∑ ¬∑
+
+Ì†µÌ±Å Classes: Ì†µÌ±Å√óÌ†µÌ∞∂
+Dog Chair ¬∑ ¬∑ ¬∑
+
+Ì†µÌ∞ª√óÌ†µÌ±ä√óÌ†µÌ∞∂!"#$%
+
+Ì†µÌ±Å√óÌ†µÌ∞∂&$&'()
+
+FC
+
+2048
+
+FFN
+
+FC
+
+Conv
+C
+P2M Attention
+
+FC
+C
+M2P & M2M Attention
+
+C/2 C/2
+Ì†µÌ±û! Ì†µÌ±ò! Ì†µÌ±£! C
+
+C/2 C/2
+C Ì†µÌ±£" Ì†µÌ±ò" Ì†µÌ±û"
+
+C Conv
+P2P AxialAttention
+Ì†µÌ∞ª√óÌ†µÌ±ä√óÌ†µÌ∞∂!"#$%
+(P) ixel Path
+
+C FC
+Ì†µÌ±Å√óÌ†µÌ∞∂&$&'()
+(M) emory Path
+
+Ì†µÌ±Å
+
+Masks:
+
+Ì†µÌ±Å√ó
+
+Ì†µÌ∞ª 4
+
+√ó
+
+Ì†µÌ±ä 4
+
+¬∑ ¬∑ ¬∑
+
+Ì†µÌ±Å Classes: Ì†µÌ±Å√óÌ†µÌ∞∂
+Dog Chair ¬∑ ¬∑ ¬∑
+
+Ì†µÌ∞ª Ì†µÌ±ä Ì†µÌ∞∑√ó √ó
+44
+
+Ì†µÌ±Å√óÌ†µÌ∞∑
+
+Sep 5x5 256 Conv 1x1
+
+3x Wide-Basic
+
+1/4 256
+
+3x Wide-Basic
+
+1/8 512
+
+FC 512 FC Ì†µÌ±Å√ó512
+
+1/16 3x Dual-Path (Wide-Bottle) 2048 Transformer Block (512) Ì†µÌ±Å√ó512
+
+Pretrain 1/16 3x Dual-Path (Wide-Bottle) 2048 Transformer Block (512)
+
+Ì†µÌ±Å√ó512
+
+1/16 3x Dual-Path (Wide-Bottle) 1024 Transformer Block (256)
+
+Ì†µÌ±Å√ó512
+
+6x Wide-Basic
+
+1/8 512
+
+3x Wide-Basic
+
+1/4 256
+
+3x Wide-Basic
+
+1/2 128
+
+Conv 3x3 Stem
+
+1/2 64
+
+Pixel Path
+
+Ì†µÌ∞ª√óÌ†µÌ±ä
+
+Memory
+Memory Path
+Ì†µÌ±Å√ó512
+
+FC 512 FC FC 256 FC
+FC 512 FC
+
+Ì†µÌ±Å
+
+Masks:
+
+Ì†µÌ±Å√ó
+
+Ì†µÌ∞ª 4
+
+√ó
+
+Ì†µÌ±ä 4
+
+¬∑ ¬∑ ¬∑
+
+Ì†µÌ±Å Classes: Ì†µÌ±Å√óÌ†µÌ∞∂
+Dog Chair ¬∑ ¬∑ ¬∑
+
+Ì†µÌ∞ª Ì†µÌ±ä Ì†µÌ∞∑√ó √ó
+44
+
+Ì†µÌ±Å√óÌ†µÌ∞∑
+
+Sep 5x5 256 Conv 1x1
+
+1x BottleNeck
+
+1/4 256
+
+1x BottleNeck
+
+1/8 512
+
+FC 256 FC Ì†µÌ±Å√ó256
+
+1/16 1x Dual-Path (Axial) 2048 Transformer Block (256)
+
+Ì†µÌ±Å√ó256
+
+Pretrain 1/16 3x Dual-Path (Axial) 2048 Transformer Block (256)
+
+Ì†µÌ±Å√ó256
+
+6x Axial-Block
+
+1/16 1024
+
+4x BottleNeck
+
+1/8 512
+
+3x BottleNeck
+
+1/4 256
+
+Inception Stem
+
+1/4 128
+
+Pixel Path
+
+Ì†µÌ∞ª√óÌ†µÌ±ä
+
+Memory
+Memory Path
+Ì†µÌ±Å√ó256
+
+Ì†µÌ∞ª Ì†µÌ±ä Ì†µÌ∞∑√ó √ó
+44
+
+Ì†µÌ±Å√óÌ†µÌ∞∑
+
+Sep 5x5 256 Conv 1x1
+
+3x Wide-Basic
+
+1/4 256
+
+3x Wide-Basic
+
+1/8 512
+
+FC 512 FC Ì†µÌ±Å√ó512
+
+1/16 3x Dual-Path (Wide-Axial) 2048 Transformer Block (512)
+
+Ì†µÌ±Å√ó512
+
+3x Wide-Basic
+
+1/8 512
+
+3x Wide-Basic
+
+1/4 256
+
+3x Wide-Basic
+
+1/8 512
+
+1/16 3x Dual-Path (Wide-Axial) 2048 Transformer Block (512)
+
+Ì†µÌ±Å√ó512
+
+Pretrain 1/16 1x Dual-Path (Wide-Axial) 2048 Transformer Block (512)
+
+1x Wide-Basic
+
+1/8 512
+
+1x Wide-Basic
+
+1/4 256
+
+1x Wide-Basic
+
+1/8 512
+
+Ì†µÌ±Å√ó512
+
+1/16 3x Dual-Path (Wide-Axial) 2048 Transformer Block (512)
+
+Ì†µÌ±Å√ó512
+
+1/16 3x Dual-Path (Wide-Axial) 1024 Transformer Block (256)
+
+Ì†µÌ±Å√ó512
+
+6x Wide-Basic
+
+1/8 512
+
+3x Wide-Basic
+
+1/4 256
+
+3x Wide-Basic
+
+1/2 128
+
+Conv 3x3 Stem
+
+1/2 64
+
+Memory
+
+Pixel Path
+Ì†µÌ∞ª√óÌ†µÌ±ä
+
+Memory Path
+Ì†µÌ±Å√ó512
+
+(a) Dual-Path Transformer Block
+
+(b) MaX-DeepLab-Ablation
+
+(c) MaX-DeepLab-S
+
+(d) MaX-DeepLab-L
+
+Figure A.8. More detailed MaX-DeepLab architectures. Pretrain labels where we use a classiÔ¨Åcation head to pretrain our models on ImageNet [50]. (a) A dual-path transformer block with C intermediate bottleneck channels. (b) The baseline architecture for our ablation studies in Sec. 4.2. (c) MaX-DeepLab-S that matches the number of parameters and M-Adds of DETR-R101-Panoptic [10]. Axial-Block (Fig. A.6) is an axial-attention bottleneck block borrowed from Axial-DeepLab-L [89]. (d) MaX-DeepLab-L that achieves the state-of-theart performance on COCO [60]. Wide-Axial is a wide version of Axial-Block with doubled intermediate bottleneck channels, similar to the one used in Axial-DeepLab-XL [89]. (The residual connections are dropped for neatness).
+
+15
+
+References
+[1] Joshua Ainslie, Santiago Ontanon, Chris Alberti, Philip Pham, Anirudh Ravula, and Sumit Sanghai. Etc: Encoding long and structured data in transformers. In EMNLP, 2020. 2
+[2] Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. Neural machine translation by jointly learning to align and translate. In ICLR, 2015. 2
+[3] Min Bai and Raquel Urtasun. Deep watershed transform for instance segmentation. In CVPR, 2017. 3
+[4] Dana H Ballard. Generalizing the hough transform to detect arbitrary shapes. Pattern Recognition, 1981. 3
+[5] Irwan Bello, Barret Zoph, Ashish Vaswani, Jonathon Shlens, and Quoc V Le. Attention augmented convolutional networks. In ICCV, 2019. 3, 5
+[6] Iz Beltagy, Matthew E Peters, and Arman Cohan. Longformer: The long-document transformer. arXiv preprint arXiv:2004.05150, 2020. 2
+[7] Navaneeth Bodla, Bharat Singh, Rama Chellappa, and Larry S Davis. Soft-nms‚Äìimproving object detection with one line of code. In ICCV, 2017. 1
+[8] Ujwal Bonde, Pablo F Alcantarilla, and Stefan Leutenegger. Towards bounding-box free panoptic segmentation. arXiv:2002.07705, 2020. 3
+[9] Antoni Buades, Bartomeu Coll, and J-M Morel. A nonlocal algorithm for image denoising. In CVPR, 2005. 3
+[10] Nicolas Carion, Francisco Massa, Gabriel Synnaeve, Nicolas Usunier, Alexander Kirillov, and Sergey Zagoruyko. End-to-end object detection with transformers. In ECCV, 2020. 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15
+[11] Liang-Chieh Chen, Raphael Gontijo Lopes, Bowen Cheng, Maxwell D Collins, Ekin D Cubuk, Barret Zoph, Hartwig Adam, and Jonathon Shlens. Naive-Student: Leveraging Semi-Supervised Learning in Video Sequences for Urban Scene Segmentation. In ECCV, 2020. 2, 6, 7
+[12] Liang-Chieh Chen, George Papandreou, Iasonas Kokkinos, Kevin Murphy, and Alan L Yuille. Semantic image segmentation with deep convolutional nets and fully connected crfs. In ICLR, 2015. 1, 3
+[13] Liang-Chieh Chen, George Papandreou, Iasonas Kokkinos, Kevin Murphy, and Alan L Yuille. Deeplab: Semantic image segmentation with deep convolutional nets, atrous convolution, and fully connected crfs. IEEE TPAMI, 2017. 3
+[14] Liang-Chieh Chen, George Papandreou, Florian Schroff, and Hartwig Adam. Rethinking atrous convolution for semantic image segmentation. arXiv:1706.05587, 2017. 3
+[15] Liang-Chieh Chen, Yi Yang, Jiang Wang, Wei Xu, and Alan L Yuille. Attention to scale: Scale-aware semantic image segmentation. In CVPR, 2016. 3
+[16] Liang-Chieh Chen, Yukun Zhu, George Papandreou, Florian Schroff, and Hartwig Adam. Encoder-decoder with atrous separable convolution for semantic image segmentation. In ECCV, 2018. 3, 5
+[17] Ting Chen, Simon Kornblith, Mohammad Norouzi, and Geoffrey Hinton. A simple framework for contrastive learning of visual representations. In ICML, 2020. 6
+
+[18] Yunpeng Chen, Yannis Kalantidis, Jianshu Li, Shuicheng Yan, and Jiashi Feng. AÀÜ 2-nets: Double attention networks. In NeurIPS, 2018. 3
+[19] Bowen Cheng, Liang-Chieh Chen, Yunchao Wei, Yukun Zhu, Zilong Huang, Jinjun Xiong, Thomas S Huang, WenMei Hwu, and Honghui Shi. Spgnet: Semantic prediction guidance for scene parsing. In ICCV, 2019. 2, 5
+[20] Bowen Cheng, Maxwell D Collins, Yukun Zhu, Ting Liu, Thomas S Huang, Hartwig Adam, and Liang-Chieh Chen. Panoptic-deeplab. In ICCV COCO + Mapillary Joint Recognition Challenge Workshop, 2019. 3
+[21] Bowen Cheng, Maxwell D Collins, Yukun Zhu, Ting Liu, Thomas S Huang, Hartwig Adam, and Liang-Chieh Chen. Panoptic-DeepLab: A Simple, Strong, and Fast Baseline for Bottom-Up Panoptic Segmentation. In CVPR, 2020. 1, 2, 3, 5, 6, 7
+[22] Jianpeng Cheng, Li Dong, and Mirella Lapata. Long shortterm memory-networks for machine reading. In EMNLP, 2016. 2
+[23] Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers. arXiv:1904.10509, 2019. 2
+[24] Franc¬∏ois Chollet. Xception: Deep learning with depthwise separable convolutions. In CVPR, 2017. 7
+[25] Jifeng Dai, Haozhi Qi, Yuwen Xiong, Yi Li, Guodong Zhang, Han Hu, and Yichen Wei. Deformable convolutional networks. In ICCV, 2017. 7
+[26] Zihang Dai, Zhilin Yang, Yiming Yang, Jaime G Carbonell, Quoc Le, and Ruslan Salakhutdinov. Transformer-xl: Attentive language models beyond a Ô¨Åxed-length context. In ACL, 2019. 2
+[27] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep bidirectional transformers for language understanding. In NAACL, 2019. 2
+[28] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. An image is worth 16x16 words: Transformers for image recognition at scale. arXiv:2010.11929, 2020. 3
+[29] Jun Fu, Jing Liu, Haijie Tian, Yong Li, Yongjun Bao, Zhiwei Fang, and Hanqing Lu. Dual attention network for scene segmentation. In CVPR, 2019. 3
+[30] Naiyu Gao, Yanhu Shan, Yupei Wang, Xin Zhao, Yinan Yu, Ming Yang, and Kaiqi Huang. Ssap: Single-shot instance segmentation with afÔ¨Ånity pyramid. In ICCV, 2019. 3
+[31] Ankit Gupta and Jonathan Berant. Gmat: Global memory augmentation for transformers. arXiv:2006.03274, 2020. 2
+[32] Kaiming He, Haoqi Fan, Yuxin Wu, Saining Xie, and Ross Girshick. Momentum contrast for unsupervised visual representation learning. In CVPR, 2020. 6
+[33] Kaiming He, Georgia Gkioxari, Piotr Dolla¬¥r, and Ross Girshick. Mask r-cnn. In ICCV, 2017. 1, 3
+[34] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In CVPR, 2016. 6
+
+16
+
+[35] Jonathan Ho, Nal Kalchbrenner, Dirk Weissenborn, and Tim Salimans. Axial attention in multidimensional transformers. arXiv:1912.12180, 2019. 3, 5
+[36] Han Hu, Jiayuan Gu, Zheng Zhang, Jifeng Dai, and Yichen Wei. Relation networks for object detection. In CVPR, 2018. 3
+[37] Han Hu, Zheng Zhang, Zhenda Xie, and Stephen Lin. Local relation networks for image recognition. In ICCV, 2019. 3
+[38] Gao Huang, Yu Sun, Zhuang Liu, Daniel Sedra, and Kilian Q Weinberger. Deep networks with stochastic depth. In ECCV, 2016. 6
+[39] Zilong Huang, Xinggang Wang, Lichao Huang, Chang Huang, Yunchao Wei, and Wenyu Liu. Ccnet: Criss-cross attention for semantic segmentation. In ICCV, 2019. 3, 5
+[40] Jyh-Jing Hwang, Stella X Yu, Jianbo Shi, Maxwell D Collins, Tien-Ju Yang, Xiao Zhang, and Liang-Chieh Chen. SegSort: Segmentation by discriminative sorting of segments. In ICCV, 2019. 6
+[41] Sergey Ioffe and Christian Szegedy. Batch normalization: accelerating deep network training by reducing internal covariate shift. In ICML, 2015. 5
+[42] Fabian Isensee, Jens Petersen, Andre Klein, David Zimmerer, Paul F Jaeger, Simon Kohl, Jakob Wasserthal, Gregor Koehler, Tobias Norajitra, Sebastian Wirkert, et al. nnunet: Self-adapting framework for u-net-based medical image segmentation. arXiv:1809.10486, 2018. 6
+[43] Xu Jia, Bert De Brabandere, Tinne Tuytelaars, and Luc V Gool. Dynamic Ô¨Ålter networks. In NeurIPS, 2016. 5, 9
+[44] Alex Kendall, Yarin Gal, and Roberto Cipolla. Multi-task learning using uncertainty to weigh losses for scene geometry and semantics. In CVPR, 2018. 3
+[45] Margret Keuper, Evgeny Levinkov, Nicolas Bonneel, Guillaume Lavoue¬¥, Thomas Brox, and Bjorn Andres. EfÔ¨Åcient decomposition of image and mesh graphs by lifted multicuts. In ICCV, 2015. 3
+[46] Prannay Khosla, Piotr Teterwak, Chen Wang, Aaron Sarna, Yonglong Tian, Phillip Isola, Aaron Maschinot, Ce Liu, and Dilip Krishnan. Supervised contrastive learning. In NeurIPS, 2020. 6
+[47] Alexander Kirillov, Ross Girshick, Kaiming He, and Piotr Dolla¬¥r. Panoptic feature pyramid networks. In CVPR, 2019. 1, 2, 3, 7
+[48] Alexander Kirillov, Kaiming He, Ross Girshick, Carsten Rother, and Piotr Dolla¬¥r. Panoptic segmentation. In CVPR, 2019. 1, 2, 3
+[49] Nikita Kitaev, ≈Åukasz Kaiser, and Anselm Levskaya. Reformer: The efÔ¨Åcient transformer. In ICLR, 2020. 2
+[50] Alex Krizhevsky, Ilya Sutskever, and Geoffrey E Hinton. Imagenet classiÔ¨Åcation with deep convolutional neural networks. In NeurIPS, 2012. 7, 9, 15
+[51] Harold W Kuhn. The hungarian method for the assignment problem. Naval research logistics quarterly, 2(1-2):83‚Äì97, 1955. 2, 4
+[52] Yann LeCun, Le¬¥on Bottou, Yoshua Bengio, and Patrick Haffner. Gradient-based learning applied to document recognition. Proceedings of the IEEE, 86(11):2278‚Äì2324, 1998. 2
+
+[53] Bastian Leibe, Ales Leonardis, and Bernt Schiele. Combined object categorization and segmentation with an implicit shape model. In Workshop on statistical learning in computer vision, ECCV, 2004. 3
+[54] Jie Li, Allan Raventos, Arjun Bhargava, Takaaki Tagawa, and Adrien Gaidon. Learning to fuse things and stuff. arXiv:1812.01192, 2018. 3
+[55] Qizhu Li, Xiaojuan Qi, and Philip HS Torr. Unifying training and inference for panoptic segmentation. In CVPR, 2020. 3
+[56] Yanwei Li, Xinze Chen, Zheng Zhu, Lingxi Xie, Guan Huang, Dalong Du, and Xingang Wang. Attention-guided uniÔ¨Åed network for panoptic segmentation. In CVPR, 2019. 3
+[57] Yingwei Li, Xiaojie Jin, Jieru Mei, Xiaochen Lian, Linjie Yang, Cihang Xie, Qihang Yu, Yuyin Zhou, Song Bai, and Alan Yuille. Neural architecture search for lightweight nonlocal networks. In CVPR, 2020. 3
+[58] Tsung-Yi Lin, Piotr Dolla¬¥r, Ross Girshick, Kaiming He, Bharath Hariharan, and Serge Belongie. Feature pyramid networks for object detection. In CVPR, 2017. 3, 5
+[59] Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He, and Piotr Dolla¬¥r. Focal loss for dense object detection. In ICCV, 2017. 4
+[60] Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dolla¬¥r, and C Lawrence Zitnick. Microsoft coco: Common objects in context. In ECCV, 2014. 2, 6, 9, 15
+[61] Chenxi Liu, Liang-Chieh Chen, Florian Schroff, Hartwig Adam, Wei Hua, Alan Yuille, and Li Fei-Fei. Auto-deeplab: Hierarchical neural architecture search for semantic image segmentation. In CVPR, 2019. 5
+[62] Liyuan Liu, Haoming Jiang, Pengcheng He, Weizhu Chen, Xiaodong Liu, Jianfeng Gao, and Jiawei Han. On the variance of the adaptive learning rate and beyond. In ICLR, 2020. 6
+[63] Shu Liu, Lu Qi, Haifang Qin, Jianping Shi, and Jiaya Jia. Path aggregation network for instance segmentation. In CVPR, 2018. 5
+[64] Wei Liu, Dragomir Anguelov, Dumitru Erhan, Christian Szegedy, Scott Reed, Cheng-Yang Fu, and Alexander C Berg. Ssd: Single shot multibox detector. In ECCV, 2016. 5
+[65] Yudong Liu, Yongtao Wang, Siwei Wang, TingTing Liang, Qijie Zhao, Zhi Tang, and Haibin Ling. Cbnet: A novel composite backbone network architecture for object detection. In AAAI, 2020. 7
+[66] Yiding Liu, Siyu Yang, Bin Li, Wengang Zhou, Jizheng Xu, Houqiang Li, and Yan Lu. AfÔ¨Ånity derivation and graph merge for instance segmentation. In ECCV, 2018. 3
+[67] Huanyu Liu1, Chao Peng, Changqian Yu, Jingbo Wang, Xu Liu, Gang Yu, and Wei Jiang. An end-to-end network for panoptic segmentation. In CVPR, 2019. 3
+[68] Minh-Thang Luong, Hieu Pham, and Christopher D Manning. Effective approaches to attention-based neural machine translation. In EMNLP, 2015. 2
+
+17
+
+[69] Fausto Milletari, Nassir Navab, and Seyed-Ahmad Ahmadi. V-net: Fully convolutional neural networks for volumetric medical image segmentation. In 3DV, 2016. 6
+[70] Davy Neven, Bert De Brabandere, Marc Proesmans, and Luc Van Gool. Instance segmentation by jointly optimizing spatial embeddings and clustering bandwidth. In CVPR, 2019. 3
+[71] Alejandro Newell, Kaiyu Yang, and Jia Deng. Stacked hourglass networks for human pose estimation. In ECCV, 2016. 2, 5
+[72] Niki Parmar, Prajit Ramachandran, Ashish Vaswani, Irwan Bello, Anselm Levskaya, and Jon Shlens. Stand-alone selfattention in vision models. In NeurIPS, 2019. 3
+[73] Niki Parmar, Ashish Vaswani, Jakob Uszkoreit, ≈Åukasz Kaiser, Noam Shazeer, Alexander Ku, and Dustin Tran. Image transformer. In ICML, 2018. 3
+[74] Lorenzo Porzi, Samuel Rota Bulo`, Aleksander Colovic, and Peter Kontschieder. Seamless scene segmentation. In CVPR, 2019. 3
+[75] Haozhi Qi, Zheng Zhang, Bin Xiao, Han Hu, Bowen Cheng, Yichen Wei, and Jifeng Dai. Deformable convolutional networks ‚Äì coco detection and segmentation challenge 2017 entry. ICCV COCO Challenge Workshop, 2017. 7
+[76] Siyuan Qiao, Liang-Chieh Chen, and Alan Yuille. Detectors: Detecting objects with recursive feature pyramid and switchable atrous convolution. arXiv:2006.02334, 2020. 1, 3, 5, 7, 9, 10
+[77] Shaoqing Ren, Kaiming He, Ross Girshick, and Jian Sun. Faster r-cnn: Towards real-time object detection with region proposal networks. In NeurIPS, 2015. 1
+[78] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. Unet: Convolutional networks for biomedical image segmentation. In International Conference on Medical image computing and computer-assisted intervention, 2015. 2, 5
+[79] Peter Shaw, Jakob Uszkoreit, and Ashish Vaswani. Selfattention with relative position representations. In NAACL, 2018. 2
+[80] Zhuoran Shen, Mingyuan Zhang, Haiyu Zhao, Shuai Yi, and Hongsheng Li. EfÔ¨Åcient attention: Attention with linear complexities. In WACV, 2021. 3
+[81] Konstantin SoÔ¨Åiuk, Olga Barinova, and Anton Konushin. Adaptis: Adaptive instance selection network. In ICCV, 2019. 3
+[82] Russell Stewart, Mykhaylo Andriluka, and Andrew Y Ng. End-to-end people detection in crowded scenes. In CVPR, 2016. 2, 4
+[83] Saeid Asgari Taghanaki, Yefeng Zheng, S Kevin Zhou, Bogdan Georgescu, Puneet Sharma, Daguang Xu, Dorin Comaniciu, and Ghassan Hamarneh. Combo loss: Handling input and output imbalance in multi-organ segmentation. Computerized Medical Imaging and Graphics, 75:24‚Äì 33, 2019. 6
+[84] Mingxing Tan, Ruoming Pang, and Quoc V Le. EfÔ¨Åcientdet: Scalable and efÔ¨Åcient object detection. In CVPR, 2020. 5
+
+[85] Zhi Tian, Chunhua Shen, and Hao Chen. Conditional convolutions for instance segmentation. In ECCV, 2020. 5, 9
+[86] Jonas Uhrig, Eike Rehder, Bjo¬®rn Fro¬®hlich, Uwe Franke, and Thomas Brox. Box2pix: Single-shot instance segmentation by assigning pixels to object boxes. In IEEE Intelligent Vehicles Symposium (IV), 2018. 3
+[87] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, ≈Åukasz Kaiser, and Illia Polosukhin. Attention is all you need. In NeurIPS, 2017. 2
+[88] Luc Vincent and Pierre Soille. Watersheds in digital spaces: an efÔ¨Åcient algorithm based on immersion simulations. IEEE TPAMI, 1991. 3
+[89] Huiyu Wang, Yukun Zhu, Bradley Green, Hartwig Adam, Alan Yuille, and Liang-Chieh Chen. Axial-DeepLab: Stand-Alone Axial-Attention for Panoptic Segmentation. In ECCV, 2020. 1, 2, 3, 5, 6, 7, 9, 10, 14, 15
+[90] Sinong Wang, Belinda Li, Madian Khabsa, Han Fang, and Hao Ma. Linformer: Self-attention with linear complexity. arXiv:2006.04768, 2020. 2
+[91] Xiaolong Wang, Ross Girshick, Abhinav Gupta, and Kaiming He. Non-local neural networks. In CVPR, 2018. 3, 5
+[92] Xinlong Wang, Rufeng Zhang, Tao Kong, Lei Li, and Chunhua Shen. SOLOv2: Dynamic and fast instance segmentation. In NeurIPS, 2020. 5, 9
+[93] Yuxin Wu, Alexander Kirillov, Francisco Massa, Wan-Yen Lo, and Ross Girshick. Detectron2. https://github. com/facebookresearch/detectron2, 2019. 2, 7
+[94] Zhirong Wu, Alexei A Efros, and Stella X Yu. Improving generalization via scalable neighborhood component analysis. In ECCV, 2018. 6
+[95] Zifeng Wu, Chunhua Shen, and Anton Van Den Hengel. Wider or deeper: Revisiting the ResNet model for visual recognition. Pattern Recognition, 2019. 6, 7
+[96] Zhirong Wu, Yuanjun Xiong, Stella X Yu, and Dahua Lin. Unsupervised feature learning via non-parametric instance discrimination. In CVPR, 2018. 6
+[97] Saining Xie, Ross Girshick, Piotr Dolla¬¥r, Zhuowen Tu, and Kaiming He. Aggregated residual transformations for deep neural networks. In CVPR, 2017. 7
+[98] Yuwen Xiong, Renjie Liao, Hengshuang Zhao, Rui Hu, Min Bai, Ersin Yumer, and Raquel Urtasun. Upsnet: A uniÔ¨Åed panoptic segmentation network. In CVPR, 2019. 1, 2, 3, 6, 7
+[99] Brandon Yang, Gabriel Bender, Quoc V Le, and Jiquan Ngiam. Condconv: Conditionally parameterized convolutions for efÔ¨Åcient inference. In NeurIPS, 2019. 5, 9
+[100] Tien-Ju Yang, Maxwell D Collins, Yukun Zhu, Jyh-Jing Hwang, Ting Liu, Xiao Zhang, Vivienne Sze, George Papandreou, and Liang-Chieh Chen. Deeperlab: Single-shot image parser. arXiv:1902.05093, 2019. 2, 3
+[101] Yibo Yang, Hongyang Li, Xia Li, Qijie Zhao, Jianlong Wu, and Zhouchen Lin. Sognet: Scene overlap graph network for panoptic segmentation. In AAAI, 2020. 3
+
+18
+
+[102] Sergey Zagoruyko and Nikos Komodakis. Wide residual networks. In BMVC, 2016. 6, 7
+[103] Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, et al. Big bird: Transformers for longer sequences. In NeurIPS, 2020. 2
+[104] Michael Zhang, James Lucas, Jimmy Ba, and Geoffrey E Hinton. Lookahead optimizer: k steps forward, 1 step back. In NeurIPS, 2019. 6
+[105] Shifeng Zhang, Cheng Chi, Yongqiang Yao, Zhen Lei, and Stan Z Li. Bridging the gap between anchor-based and anchor-free detection via adaptive training sample selection. In CVPR, 2020. 1
+[106] Hengshuang Zhao, Yi Zhang, Shu Liu, Jianping Shi, Chen Change Loy, Dahua Lin, and Jiaya Jia. Psanet: Point-wise spatial attention network for scene parsing. In ECCV, 2018. 3
+[107] Xizhou Zhu, Dazhi Cheng, Zheng Zhang, Stephen Lin, and Jifeng Dai. An empirical study of spatial attention mechanisms in deep networks. In ICCV, pages 6688‚Äì6697, 2019. 3
+[108] Xizhou Zhu, Weijie Su, Lewei Lu, Bin Li, Xiaogang Wang, and Jifeng Dai. Deformable detr: Deformable transformers for end-to-end object detection. arXiv:2010.04159, 2020. 3
+[109] Zhen Zhu, Mengde Xu, Song Bai, Tengteng Huang, and Xiang Bai. Asymmetric non-local neural networks for semantic segmentation. In CVPR, 2019. 3
+19
+

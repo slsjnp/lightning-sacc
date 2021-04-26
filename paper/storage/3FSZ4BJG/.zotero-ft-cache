@@ -1,0 +1,725 @@
+Axial-DeepLab: Stand-Alone Axial-Attention for Panoptic Segmentation
+Huiyu Wang1 , Yukun Zhu2, Bradley Green2, Hartwig Adam2, Alan Yuille1, and Liang-Chieh Chen2
+1 Johns Hopkins University 2 Google Research
+Abstract. Convolution exploits locality for eÔ¨Éciency at a cost of missing long range context. Self-attention has been adopted to augment CNNs with non-local interactions. Recent works prove it possible to stack self-attention layers to obtain a fully attentional network by restricting the attention to a local region. In this paper, we attempt to remove this constraint by factorizing 2D self-attention into two 1D selfattentions. This reduces computation complexity and allows performing attention within a larger or even global region. In companion, we also propose a position-sensitive self-attention design. Combining both yields our position-sensitive axial-attention layer, a novel building block that one could stack to form axial-attention models for image classiÔ¨Åcation and dense prediction. We demonstrate the eÔ¨Äectiveness of our model on four large-scale datasets. In particular, our model outperforms all existing stand-alone self-attention models on ImageNet. Our Axial-DeepLab improves 2.8% PQ over bottom-up state-of-the-art on COCO test-dev. This previous state-of-the-art is attained by our small variant that is 3.8√ó parameter-eÔ¨Écient and 27√ó computation-eÔ¨Écient. Axial-DeepLab also achieves state-of-the-art results on Mapillary Vistas and Cityscapes.
+Keywords: bottom-up panoptic segmentation, self-attention
+1 Introduction
+Convolution is a core building block in computer vision. Early algorithms employ convolutional Ô¨Ålters to blur images, extract edges, or detect features. It has been heavily exploited in modern neural networks [47,46] due to its eÔ¨Éciency and generalization ability, in comparison to fully connected models [2]. The success of convolution mainly comes from two properties: translation equivariance, and locality. Translation equivariance, although not exact [93], aligns well with the nature of imaging and thus generalizes the model to diÔ¨Äerent positions or to images of diÔ¨Äerent sizes. Locality, on the other hand, reduces parameter counts and M-Adds. However, it makes modeling long range relations challenging.
+A rich set of literature has discussed approaches to modeling long range interactions in convolutional neural networks (CNNs). Some employ atrous convolutions [33,74,64,12], larger kernel [67], or image pyramids [94,82], either designed
+Work done while an intern at Google.
+
+2
+
+H. Wang et al.
+
+by hand or searched by algorithms [99,11,57]. Another line of works adopts attention mechanisms. Attention shows its ability of modeling long range interactions in language modeling [80,85], speech recognition [21,10], and neural captioning [88]. Attention has since been extended to vision, giving signiÔ¨Åcant boosts to image classiÔ¨Åcation [6], object detection [36], semantic segmentation [39], video classiÔ¨Åcation [84], and adversarial defense [86]. These works enrich CNNs with non-local or long-range attention modules.
+Recently, stacking attention layers as stand-alone models without any spatial convolution has been proposed [65,37] and shown promising results. However, naive attention is computationally expensive, especially on large inputs. Applying local constraints to attention, proposed by [65,37], reduces the cost and enables building fully attentional models. However, local constraints limit model receptive Ô¨Åeld, which is crucial to tasks such as segmentation, especially on high-resolution inputs. In this work, we propose to adopt axial-attention [32,39], which not only allows eÔ¨Écient computation, but recovers the large receptive Ô¨Åeld in stand-alone attention models. The core idea is to factorize 2D attention into two 1D attentions along height- and width-axis sequentially. Its eÔ¨Éciency enables us to attend over large regions and build models to learn long range or even global interactions. Additionally, most previous attention modules do not utilize positional information, which degrades attention‚Äôs ability in modeling position-dependent interactions, like shapes or objects at multiple scales. Recent works [65,37,6] introduce positional terms to attention, but in a context-agnostic way. In this paper, we augment the positional terms to be context-dependent, making our attention position-sensitive, with marginal costs.
+We show the eÔ¨Äectiveness of our axial-attention models on ImageNet [70] for classiÔ¨Åcation, and on three datasets (COCO [56], Mapillary Vistas [62], and Cityscapes [22]) for panoptic segmentation [45], instance segmentation, and semantic segmentation. In particular, on ImageNet, we build an Axial-ResNet by replacing the 3 √ó 3 convolution in all residual blocks [31] with our positionsensitive axial-attention layer, and we further make it fully attentional [65] by adopting axial-attention layers in the ‚Äòstem‚Äô. As a result, our Axial-ResNet attains state-of-the-art results among stand-alone attention models on ImageNet. For segmentation tasks, we convert Axial-ResNet to Axial-DeepLab by replacing the backbones in Panoptic-DeepLab [18]. On COCO [56], our Axial-DeepLab outperforms the current bottom-up state-of-the-art, Panoptic-DeepLab [19], by 2.8% PQ on test-dev set. We also show state-of-the-art segmentation results on Mapillary Vistas [62], and Cityscapes [22].
+To summarize, our contributions are four-fold:
+‚Äì The proposed method is the Ô¨Årst attempt to build stand-alone attention models with large or global receptive Ô¨Åeld.
+‚Äì We propose position-sensitive attention layer that makes better use of positional information without adding much computational cost.
+‚Äì We show that axial attention works well, not only as a stand-alone model on image classiÔ¨Åcation, but also as a backbone on panoptic segmentation, instance segmentation, and segmantic segmentation.
+
+Axial-DeepLab
+
+3
+
+‚Äì Our Axial-DeepLab improves signiÔ¨Åcantly over bottom-up state-of-the-art on COCO, achieving comparable performance of two-stage methods. We also surpass previous state-of-the-art methods on Mapillary Vistas and Cityscapes.
+
+2 Related Work
+Top-down panoptic segmentation: Most state-of-the-art panoptic segmentation models employ a two-stage approach where object proposals are Ô¨Årstly generated followed by sequential processing of each proposal. We refer to such approaches as top-down or proposal-based methods. Mask R-CNN [30] is commonly deployed in the pipeline for instance segmentation, paired with a light-weight stuÔ¨Ä segmentation branch. For example, Panoptic FPN [44] incorporates a semantic segmentation head to Mask R-CNN [30], while Porzi et al . [68] append a light-weight DeepLab-inspired module [13] to the multi-scale features from FPN [55]. Additionally, some extra modules are designed to resolve the overlapping instance predictions by Mask R-CNN. TASCNet [49] and AUNet [52] propose a module to guide the fusion between ‚Äòthing‚Äô and ‚ÄòstuÔ¨Ä‚Äô predictions, while Liu et al . [61] adopt a Spatial Ranking module. UPSNet [87] develops an eÔ¨Écient parameter-free panoptic head for fusing ‚Äòthing‚Äô and ‚ÄòstuÔ¨Ä‚Äô, which is further explored by Li et al . [50] for end-to-end training of panoptic segmentation models. AdaptIS [77] uses point proposals to generate instance masks.
+Bottom-up panoptic segmentation: In contrast to top-down approaches, bottom-up or proposal-free methods for panoptic segmentation typically start with the semantic segmentation prediction followed by grouping ‚Äòthing‚Äô pixels into clusters to obtain instance segmentation. DeeperLab [89] predicts bounding box four corners and object centers for class-agnostic instance segmentation. SSAP [28] exploits the pixel-pair aÔ¨Énity pyramid [60] enabled by an eÔ¨Écient graph partition method [43]. BBFNet [7] obtains instance segmentation results by Watershed transform [81,4] and Hough-voting [5,48]. Recently, PanopticDeepLab [19], a simple, fast, and strong approach for bottom-up panoptic segmentation, employs a class-agnostic instance segmentation branch involving a simple instance center regression [42,79,63], coupled with DeepLab semantic segmentation outputs [12,14,15]. Panoptic-DeepLab has achieved state-of-theart results on several benchmarks, and our method builds on top of it.
+Self-attention: Attention, introduced by [3] for the encoder-decoder in a neural sequence-to-sequence model, is developed to capture correspondence of tokens between two sequences. In contrast, self-attention is deÔ¨Åned as applying attention to a single context instead of across multiple modalities. Its ability to directly encode long-range interactions and its parallelizability, has led to state-of-the-art performance for various tasks [80,38,25,66,72,24,53]. Recently, self-attention has been applied to computer vision, by augmenting CNNs with non-local or long-range modules. Non-local neural networks [84] show that selfattention is an instantiation of non-local means [9] and achieve gains on many vision tasks such as video classiÔ¨Åcation and object detection. Additionally, [17,6] show improvements on image classiÔ¨Åcation by combining features from self-
+
+4
+
+H. Wang et al.
+
+attention and convolution. State-of-the-art results on video action recognition tasks [17] are also achieved in this way. On semantic segmentation, self-attention is developed as a context aggregation module that captures multi-scale context [39,26,98,95]. EÔ¨Écient attention methods are proposed to reduce its complexity [73,39,53]. Additionally, CNNs augmented with non-local means [9] are shown to be more robust to adversarial attacks [86]. Besides discriminative tasks, self-attention is also applied to generative modeling of images [91,8,32]. Recently, [65,37] show that self-attention layers alone could be stacked to form a fully attentional model by restricting the receptive Ô¨Åeld of self-attention to a local square region. Encouraging results are shown on both image classiÔ¨Åcation and object detection. In this work, we follow this direction of research and propose a stand-alone self-attention model with large or global receptive Ô¨Åeld, making self-attention models non-local again. Our models are evaluated on bottom-up panoptic segmentation and show signiÔ¨Åcant improvements.
+
+3 Method
+We begin by formally introducing our position-sensitive self-attention mechanism. Then, we discuss how it is applied to axial-attention and how we build stand-alone Axial-ResNet and Axial-DeepLab with axial-attention layers.
+
+3.1 Position-Sensitive Self-Attention
+
+Self-Attention: Self-attention mechanism is usually applied to vision models
+as an add-on to augment CNNs outputs [84,91,39]. Given an input feature map x ‚àà Rh√ów√ódin with height h, width w, and channels din, the output at position o = (i, j), yo ‚àà Rdout , is computed by pooling over the projected input as:
+
+yo =
+
+softmaxp(qoT kp)vp
+
+(1)
+
+p‚ààN
+
+where N is the whole location lattice, and queries qo = WQxo, keys ko = WK xo, values vo = WV xo are all linear projections of the input xo ‚àÄo ‚àà N . WQ, WK ‚àà Rdq√ódin and WV ‚àà Rdout√ódin are all learnable matrices. The softmaxp denotes a softmax function applied to all possible p = (a, b) positions, which in this case
+is also the whole 2D lattice. This mechanism pools values vp globally based on aÔ¨Énities xTo WQT WK xp,
+allowing us to capture related but non-local context in the whole feature map,
+as opposed to convolution which only captures local relations. However, self-attention is extremely expensive to compute (O(h2w2)) when
+the spatial dimension of the input is large, restricting its use to only high levels of
+a CNN (i.e., downsampled feature maps) or small images. Another drawback is
+that the global pooling does not exploit positional information, which is critical
+to capture spatial structures or shapes in vision tasks.
+These two issues are mitigated in [65] by adding local constraints and po-
+sitional encodings to self-attention. For each location o, a local m √ó m square
+
+Axial-DeepLab
+
+5
+
+region is extracted to serve as a memory bank for computing the output yo. This signiÔ¨Åcantly reduces its computation to O(hwm2), allowing self-attention modules to be deployed as stand-alone layers to form a fully self-attentional neural network. Additionally, a learned relative positional encoding term is incorporated into the aÔ¨Énities, yielding a dynamic prior of where to look at in the receptive Ô¨Åeld (i.e., the local m √ó m square region). Formally, [65] proposes
+
+yo =
+
+softmaxp(qoT kp + qoT rp‚àío)vp
+
+(2)
+
+p‚ààNm√óm (o)
+
+where Nm√óm(o) is the local m √ó m square region centered around location o = (i, j), and the learnable vector rp‚àío ‚àà Rdq is the added relative positional encoding. The inner product qoT rp‚àío measures the compatibility from location p = (a, b) to location o = (i, j). We do not consider absolute positional encoding qoT rp, because they do not generalize well compared to the relative counterpart [65]. In the following paragraphs, we drop the term relative for conciseness.
+In practice, dq and dout are much smaller than din, and one could extend single-head attention in Eq. (2) to multi-head attention to capture a mixture of
+aÔ¨Énities. In particular, multi-head attention is computed by applying N singlehead attentions in parallel on xo (with diÔ¨Äerent WQn, WKn , WVn, ‚àÄn ‚àà {1, 2, . . . , N } for the n-th head), and then obtaining the Ô¨Ånal output zo by concatenating the results from each head, i.e., zo = concatn(yon). Note that positional encodings are often shared across heads, so that they introduce marginal extra parameters.
+Position-Sensitivity: We notice that previous positional bias only depends
+on the query pixel xo, not the key pixel xp. However, the keys xp could also have information about which location to attend to. We therefore add a key-dependent positional bias term kpT rpk‚àío, besides the query-dependent bias qoT rpq‚àío.
+Similarly, the values vp do not contain any positional information in Eq. (2). In the case of large receptive Ô¨Åelds or memory banks, it is unlikely that yo contains the precise location from which vp comes. Thus, previous models have to trade-oÔ¨Ä between using smaller receptive Ô¨Åelds (i.e., small m √ó m regions)
+and throwing away precise spatial structures. In this work, we enable the output yo to retrieve relative positions rpv‚àío, besides the content vp, based on query-key aÔ¨Énities qoT kp. Formally,
+
+yo =
+
+softmaxp(qoT kp + qoT rpq‚àío + kpT rpk‚àío)(vp + rpv‚àío)
+
+(3)
+
+p‚ààNm√óm (o)
+
+where the learnable rpk‚àío ‚àà Rdq is the positional encoding for keys, and rpv‚àío ‚àà Rdout is for values. Both vectors do not introduce many parameters, since they are shared across attention heads in a layer, and the number of local pixels |Nm√óm(o)| is usually small.
+We call this design position-sensitive self-attention, which captures long range interactions with precise positional information at a reasonable computation overhead, as veriÔ¨Åed in our experiments.
+
+6
+
+H. Wang et al.
+
+Ì†µÌ≤ö
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó16
+
+Ì†µÌ±†Ì†µÌ±úÌ†µÌ±ìÌ†µÌ±°Ì†µÌ±öÌ†µÌ±éÌ†µÌ±• Ì†µÌ∞ª√ó(Ì†µÌ±ä√óÌ†µÌ±ä)
+
+Ì†µÌ∞ª√ó(Ì†µÌ±ä√ó16)
+
+Ì†µÌ≤ö
+
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó16
+
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó16
+
+Ì†µÌ±ü/ Ì†µÌ±ä√ó16√óÌ†µÌ±ä
+
+Ì†µÌ±†Ì†µÌ±úÌ†µÌ±ìÌ†µÌ±°Ì†µÌ±öÌ†µÌ±éÌ†µÌ±•
+
+Ì†µÌ∞ª√ó(Ì†µÌ±ä√óÌ†µÌ±ä)
+
+Ì†µÌ∞ª√ó(Ì†µÌ±ä√óÌ†µÌ±ä)
+
+Ì†µÌ∞ª√ó(Ì†µÌ±ä√ó16)
+
+Ì†µÌ∞ª√ó(Ì†µÌ±ä√ó8) Ì†µÌ∞ª√óÌ†µÌ±ä√ó8 Ì†µÌ±ä#: 1√ó1
+
+Ì†µÌ∞ª√ó(8√óÌ†µÌ±ä) Ì†µÌ∞ª√óÌ†µÌ±ä√ó8
+Ì†µÌ±ä': 1√ó1
+
+Ì†µÌ≤ôÌ†µÌ∞ª√óÌ†µÌ±ä√ó128
+
+Ì†µÌ±ä(: 1√ó1
+
+Ì†µÌ±ü* Ì†µÌ±ä√ó8√óÌ†µÌ±ä
+Ì†µÌ∞ª√ó(Ì†µÌ±ä√ó8) Ì†µÌ∞ª√óÌ†µÌ±ä√ó8 Ì†µÌ±ä#: 1√ó1
+
+Ì†µÌ±ü+ Ì†µÌ±ä√ó8√óÌ†µÌ±ä
+
+Ì†µÌ∞ª√ó(8√óÌ†µÌ±ä) Ì†µÌ∞ª√óÌ†µÌ±ä√ó8
+
+Ì†µÌ±ä': 1√ó1
+
+Ì†µÌ±ä(: 1√ó1
+
+Ì†µÌ≤ôÌ†µÌ∞ª√óÌ†µÌ±ä√ó128
+
+Fig. 1. A non-local block (left) vs. our position-sensitive axial-attention applied along the width-axis (right). ‚Äú‚äó‚Äù denotes matrix multiplication, and ‚Äú‚äï‚Äù denotes elementwise sum. The softmax is performed on the last axis. Blue boxes denote 1 √ó 1 convolutions, and red boxes denote relative positional encoding. The channels din = 128, dq = 8, and dout = 16 is what we use in the Ô¨Årst stage of ResNet after ‚Äòstem‚Äô
+
+3.2 Axial-Attention
+
+The local constraint, proposed by the stand-alone self-attention models [65], signiÔ¨Åcantly reduces the computational costs in vision tasks and enables building fully self-attentional model. However, such constraint sacriÔ¨Åces the global connection, making attention‚Äôs receptive Ô¨Åeld no larger than a depthwise convolution with the same kernel size. Additionally, the local self-attention, performed in local square regions, still has complexity quadratic to the region length, introducing another hyper-parameter to trade-oÔ¨Ä between performance and computation complexity. In this work, we propose to adopt axial-attention [39,32] in standalone self-attention, ensuring both global connection and eÔ¨Écient computation. SpeciÔ¨Åcally, we Ô¨Årst deÔ¨Åne an axial-attention layer on the width-axis of an image as simply a one dimensional position-sensitive self-attention, and use the similar deÔ¨Ånition for the height-axis. To be concrete, the axial-attention layer along the width-axis is deÔ¨Åned as follows.
+
+yo =
+
+softmaxp(qoT kp + qoT rpq‚àío + kpT rpk‚àío)(vp + rpv‚àío)
+
+(4)
+
+p‚ààN1√óm (o)
+
+One axial-attention layer propagates information along one particular axis. To capture global information, we employ two axial-attention layers consecutively for the height-axis and width-axis, respectively. Both of the axial-attention layers adopt the multi-head attention mechanism, as described above.
+Axial-attention reduces the complexity to O(hwm). This enables global receptive Ô¨Åeld, which is achieved by setting the span m directly to the whole input features. Optionally, one could also use a Ô¨Åxed m value, in order to reduce memory footprint on huge feature maps.
+
+Axial-DeepLab
+
+7
+
+Ì†µÌ≤ô
+
+Ì†µÌ≤ö
+
+Ì†µÌ≤õ
+
+Conv 1√ó1
+
+Concat
+
+Concat
+
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó128
+
+(Ì†µÌ∞ª√óÌ†µÌ±ä√ó16)√ó8 Multi-Head Attention Ì†µÌ∞ª√óÌ†µÌ±ä√ó128
+Height-Axis
+
+(Ì†µÌ∞ª√óÌ†µÌ±ä√ó16)√ó8 Multi-Head Attention Ì†µÌ∞ª√óÌ†µÌ±ä√ó128
+Width-Axis
+
+Conv 1√ó1
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó256
+
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó256
+
+Ì†µÌ∞ª√óÌ†µÌ±ä√ó256
+
+Fig. 2. An axial-attention block, which consists of two axial-attention layers operating along height- and width-axis sequentially. The channels din = 128, dout = 16 is what we use in the Ô¨Årst stage of ResNet after ‚Äòstem‚Äô. We employ N = 8 attention heads
+
+Axial-ResNet: To transform a ResNet [31] to an Axial-ResNet, we replace the 3 √ó 3 convolution in the residual bottleneck block by two multi-head axialattention layers (one for height-axis and the other for width-axis). Optional striding is performed on each axis after the corresponding axial-attention layer. The two 1√ó1 convolutions are kept to shuÔ¨Ñe the features. This forms our (residual) axial-attention block, as illustrated in Fig. 2, which is stacked multiple times to obtain Axial-ResNets. Note that we do not use a 1 √ó 1 convolution in-between the two axial-attention layers, since matrix multiplications (WQ, WK , WV ) follow immediately. Additionally, the stem (i.e., the Ô¨Årst strided 7 √ó 7 convolution and 3 √ó 3 max-pooling) in the original ResNet is kept, resulting in a conv-stem model where convolution is used in the Ô¨Årst layer and attention layers are used everywhere else. In conv-stem models, we set the span m to the whole input from the Ô¨Årst block, where the feature map is 56√ó56.
+In our experiments, we also build a full axial-attention model, called Full Axial-ResNet, which further applies axial-attention to the stem. Instead of designing a special spatially-varying attention stem [65], we simply stack three axial-attention bottleneck blocks. In addition, we adopt local constraints (i.e., a local m√óm square region as in [65]) in the Ô¨Årst few blocks of Full Axial-ResNets, in order to reduce computational cost.
+Axial-DeepLab: To further convert Axial-ResNet to Axial-DeepLab for segmentation tasks, we make several changes as discussed below.
+Firstly, to extract dense feature maps, DeepLab [12] changes the stride and atrous rates of the last one or two stages in ResNet [31]. Similarly, we remove the stride of the last stage but we do not implement the ‚Äòatrous‚Äô attention module, since our axial-attention already captures global information for the whole input. In this work, we extract feature maps with output stride (i.e., the ratio of input resolution to the Ô¨Ånal backbone feature resolution) 16. We do not pursue output stride 8, since it is computationally expensive.
+Secondly, we do not adopt the atrous spatial pyramid pooling module (ASPP) [13,14], since our axial-attention block could also eÔ¨Éciently encode the multiscale or global information. We show in the experiments that our Axial-DeepLab without ASPP outperforms Panoptic-DeepLab [19] with and without ASPP.
+
+8
+
+H. Wang et al.
+
+Lastly, following Panoptic-DeepLab [19], we adopt exactly the same stem [78] of three convolutions, dual decoders, and prediction heads. The heads produce semantic segmentation and class-agnostic instance segmentation, and they are merged by majority voting [89] to form the Ô¨Ånal panoptic segmentation.
+In cases where the inputs are extremely large (e.g., 2177√ó2177) and memory is constrained, we resort to a large span m = 65 in all our axial-attention blocks. Note that we do not consider the axial span as a hyper-parameter because it is already suÔ¨Écient to cover long range or even global context on several datasets, and setting a smaller span does not signiÔ¨Åcantly reduce M-Adds.
+
+4 Experimental Results
+We conduct experiments on four large-scale datasets. We Ô¨Årst report results with our Axial-ResNet on ImageNet [70]. We then convert the ImageNet pretrained Axial-ResNet to Axial-DeepLab, and report results on COCO [56], Mapillary Vistas [62], and Cityscapes [22] for panoptic segmentation, evaluated by panoptic quality (PQ) [45]. We also report average precision (AP) for instance segmentation, and mean IoU for semantic segmentation on Mapillary Vistas and Cityscapes. Our models are trained using TensorFlow [1] on 128 TPU cores for ImageNet and 32 cores for panoptic segmentation.
+Training protocol: On ImageNet, we adopt the same training protocol as [65] for a fair comparison, except that we use batch size 512 for Full AxialResNets and 1024 for all other models, with learning rates scaled accordingly [29].
+For panoptic segmentation, we strictly follow Panoptic-DeepLab [19], except using a linear warm up Radam [58] Lookahead [92] optimizer (with the same learning rate 0.001). All our results on panoptic segmentation use this setting. We note this change does not improve the results, but smooths our training curves. Panoptic-DeepLab yields similar result in this setting.
+
+4.1 ImageNet
+For ImageNet, we build Axial-ResNet-L from ResNet-50 [31]. In detail, we set din = 128, dout = 2dq = 16 for the Ô¨Årst stage after the ‚Äòstem‚Äô. We double them when spatial resolution is reduced by a factor of 2 [76]. Additionally, we multiply all the channels [35,71,34] by 0.5, 0.75, and 2, resulting in AxialResNet-{S, M, XL}, respectively. Finally, Stand-Alone Axial-ResNets are further generated by replacing the ‚Äòstem‚Äô with three axial-attention blocks where the Ô¨Årst block has stride 2. Due to the computational cost introduced by the early layers, we set the axial span m = 15 in all blocks of Stand-Alone Axial-ResNets. We always use N = 8 heads [65]. In order to avoid careful initialization of WQ, WK , WV , rq, rk, rv, we use batch normalizations [40] in all attention layers.
+Tab. 1 summarizes our ImageNet results. The baselines ResNet-50 [31] (done by [65]) and Conv-Stem + Attention [65] are also listed. In the conv-stem setting, adding BN to attention layers of [65] slightly improves the performance by 0.3%.
+
+Axial-DeepLab
+
+9
+
+Table 1. ImageNet validation set results. BN: Use batch normalizations in attention layers. PS: Our position-sensitive self-attention. Full: Stand-alone self-attention models without spatial convolutions
+
+Method
+
+BN PS Full Params
+
+Conv-Stem methods
+
+ResNet-50 [31,65] Conv-Stem + Attention [65]
+
+25.6M 18.0M
+
+Conv-Stem + Attention
+
+
+
+Conv-Stem + PS-Attention
+
+
+
+Conv-Stem + Axial-Attention  
+
+18.0M 18.0M 12.4M
+
+Fully self-attentional methods
+
+LR-Net-50 [37] Full Attention [65] Full Axial-Attention
+
+ 23.3M  18.0M    12.5M
+
+M-Adds
+4.1B 3.5B 3.5B 3.7B 2.8B
+4.3B 3.6B 3.3B
+
+Top-1
+76.9 77.4 77.7 78.1 77.5
+77.3 77.6 78.1
+
+Our proposed position-sensitive self-attention (Conv-Stem + PS-Attention) further improves the performance by 0.4% at the cost of extra marginal computation. Our Conv-Stem + Axial-Attention performs on par with Conv-Stem + Attention [65] while being more parameter- and computation-eÔ¨Écient. When comparing with other full self-attention models, our Full Axial-Attention outperforms Full Attention [65] by 0.5%, while being 1.44√ó more parameter-eÔ¨Écient and 1.09√ó more computation-eÔ¨Écient.
+Following [65], we experiment with diÔ¨Äerent network widths (i.e., AxialResNets-{S,M,L,XL}), exploring the trade-oÔ¨Ä between accuracy, model parameters, and computational cost (in terms of M-Adds). As shown in Fig. 3, our proposed Conv-Stem + PS-Attention and Conv-Stem + Axial-Attention already outperforms ResNet-50 [31,65] and attention models [65] (both Conv-Stem + Attention, and Full Attention) at all settings. Our Full Axial-Attention further attains the best accuracy-parameter and accuracy-complexity trade-oÔ¨Äs.
+4.2 COCO
+The ImageNet pretrained Axial-ResNet model variants (with diÔ¨Äerent channels) are then converted to Axial-DeepLab model variant for panoptic segmentation tasks. We Ô¨Årst demonstrate the eÔ¨Äectiveness of our Axial-DeepLab on the challenging COCO dataset [56], which contains objects with various scales (from less than 32 √ó 32 to larger than 96 √ó 96).
+Val set: In Tab. 2, we report our validation set results and compare with other bottom-up panoptic segmentation methods, since our method also belongs to the bottom-up family. As shown in the table, our single-scale Axial-DeepLab-S outperforms DeeperLab [89] by 8% PQ, multi-scale SSAP [28] by 5.3% PQ, and single-scale Panoptic-DeepLab by 2.1% PQ. Interestingly, our single-scale AxialDeepLab-S also outperforms multi-scale Panoptic-DeepLab by 0.6% PQ while
+
+10
+
+H. Wang et al.
+
+Top-1 Accuracy (%) Top-1 Accuracy (%)
+
+79
+
+78
+
+77
+
+76
+
+Full Axial-Attention Conv-Stem + Axial-Attention
+
+75
+
+Conv-Stem + PS-Attention Conv-Stem + Attention
+
+Full Attention
+
+74
+
+ResNet-50
+
+10
+
+20 Param3e0ters (M) 40
+
+50
+
+79 78 77 76 75 74
+2
+
+Full Axial-Attention Conv-Stem + Axial-Attention Conv-Stem + PS-Attention Conv-Stem + Attention Full Attention ResNet-50
+
+4 M-A6dds (B) 8
+
+10
+
+12
+
+Fig. 3. Comparing parameters and M-Adds against accuracy on ImageNet classiÔ¨Åcation. Our position-sensitive self-attention (Conv-Stem + PS-Attention) and axialattention (Conv-Stem + Axial-Attention) consistently outperform ResNet-50 [31,65] and attention models [65] (both Conv-Stem + Attention, and Full Attention), across a range of network widths (i.e., diÔ¨Äerent channels). Our Full Axial-Attention works the best in terms of both parameters and M-Adds
+Table 2. COCO val set. MS: Multi-scale inputs
+
+Method
+DeeperLab [89] SSAP [28] Panoptic-DeepLab [19] Panoptic-DeepLab [19]
+
+Backbone
+Xception-71 ResNet-101 Xception-71 Xception-71
+
+MS Params M-Adds PQ PQTh PQSt
+
+33.8 -
+
+-
+
+
+
+36.5 -
+
+-
+
+46.7M 274.0B 39.7 43.9 33.2
+
+ 46.7M 3081.4B 41.2 44.9 35.7
+
+Axial-DeepLab-S Axial-DeepLab-M Axial-DeepLab-L Axial-DeepLab-L
+
+Axial-ResNet-S
+
+12.1M 110.4B 41.8 46.1 35.2
+
+Axial-ResNet-M
+
+25.9M 209.9B 42.9 47.6 35.8
+
+Axial-ResNet-L
+
+44.9M 343.9B 43.4 48.5 35.6
+
+Axial-ResNet-L  44.9M 3867.7B 43.9 48.6 36.8
+
+being 3.8√ó parameter-eÔ¨Écient and 27√ó computation-eÔ¨Écient (in M-Adds). Increasing the backbone capacity (via large channels) continuously improves the performance. SpeciÔ¨Åcally, our multi-scale Axial-DeepLab-L attains 43.9% PQ, outperforming Panoptic-DeepLab [19] by 2.7% PQ.
+Test-dev set: As shown in Tab. 3, our Axial-DeepLab variants show consistent improvements with larger backbones. Our multi-scale Axial-DeepLab-L attains the performance of 44.2% PQ, outperforming DeeperLab [89] by 9.9% PQ, SSAP [28] by 7.3% PQ, and Panoptic-DeepLab [19] by 2.8% PQ, setting a new state-of-the-art among bottom-up approaches. We also list several topperforming methods adopting the top-down approaches in the table for reference.
+Scale Stress Test: In order to verify that our model learns long range interactions, we perform a scale stress test besides standard testing. In the stress test, we train Panoptic-DeepLab (X-71) and our Axial-DeepLab-L with the standard setting, but test them on out-of-distribution resolutions (i.e., resize the in-
+
+Axial-DeepLab
+
+11
+
+Table 3. COCO test-dev set. MS: Multi-scale inputs
+
+Method
+
+Backbone
+
+MS PQ
+
+Top-down panoptic segmentation methods
+
+TASCNet [49] Panoptic-FPN [44] AdaptIS [77] AUNet [52] UPSNet [87] Li et al . [50] SpatialFlow [16] SOGNet [90]
+
+ResNet-50 ResNet-101 ResNeXt-101 ResNeXt-152 DCN-101 [23] DCN-101 [23] DCN-101 [23] DCN-101 [23]
+
+40.7 40.9  42.8 46.5  46.6 47.2  47.3  47.8
+
+Bottom-up panoptic segmentation methods
+
+DeeperLab [89] SSAP [28] Panoptic-DeepLab [19]
+
+Xception-71 ResNet-101 Xception-71
+
+34.3  36.9  41.4
+
+Axial-DeepLab-S Axial-DeepLab-M Axial-DeepLab-L Axial-DeepLab-L
+
+Axial-ResNet-S
+
+42.2
+
+Axial-ResNet-M
+
+43.2
+
+Axial-ResNet-L
+
+43.6
+
+Axial-ResNet-L  44.2
+
+PQTh
+47.0 48.3 53.2 55.8 53.2 53.5 53.5
+-
+37.5 40.1 45.1
+46.5 48.1 48.9 49.2
+
+PQSt
+31.0 29.7 36.7 32.5 36.7 37.7 37.9
+-
+29.6 32.0 35.9
+35.7 35.9 35.6 36.8
+
+Relative Improvement (%)
+
+40
+
+PQ (thing) PQ
+
+30
+
+PQ (stuff)
+
+20
+
+10
+
+00.0 0.5 1T.e0sti1n.g5Re2s.0olu2ti.o5n R3a.0tio 3.5 4.0
+
+Fig. 4. Scale stress test on COCO val set. Axial-DeepLab gains the most when tested on extreme resolutions. On the x-axis, ratio 4.0 means inference with resolution 4097√ó4097
+
+put to diÔ¨Äerent resolutions). Fig. 4 summarizes our relative improvements over Panoptic-DeepLab on PQ, PQ (thing) and PQ (stuÔ¨Ä). When tested on huge images, Axial-DeepLab shows large gain (30%), demonstrating that it encodes long range relations better than convolutions. Besides, Axial-DeepLab improves 40% on small images, showing that axial-attention is more robust to scale variations.
+4.3 Mapillary Vistas
+We evaluate our Axial-DeepLab on the large-scale Mapillary Vistas dataset [62]. We only report validation set results, since the test server is not available.
+
+12
+
+H. Wang et al.
+
+Table 4. Mapillary Vistas validation set. MS: Multi-scale inputs
+
+Method
+
+MS Params M-Adds PQ PQTh PQSt AP mIoU
+
+Top-down panoptic segmentation methods
+
+TASCNet [49] TASCNet [49] AdaptIS [77] Seamless [68]
+
+32.6 31.1 34.4 18.5 -
+
+
+
+34.3 34.8 33.6 20.4 -
+
+35.9 31.5 41.9 - -
+
+37.7 33.8 42.9 16.4 50.4
+
+Bottom-up panoptic segmentation methods
+
+DeeperLab [89] Panoptic-DeepLab (Xception-71 [20,69]) [19] Panoptic-DeepLab (Xception-71 [20,69]) [19]  Panoptic-DeepLab (HRNet-W48 [83]) [19]  Panoptic-DeepLab (Auto-XL++ [57]) [19] 
+
+46.7M 46.7M 71.7M 72.2M
+
+32.0 1.24T 37.7 30.4 31.35T 40.3 33.5 58.47T 39.3 60.55T 40.3 -
+
+- - 55.3 47.4 14.9 55.4 49.3 17.2 56.8
+- 17.2 55.4 - 16.9 57.6
+
+Axial-DeepLab-L Axial-DeepLab-L
+
+44.9M 1.55T 40.1 32.7 49.8 16.7 57.6  44.9M 39.35T 41.1 33.4 51.3 17.2 58.4
+
+Val set: As shown in Tab. 4, our Axial-DeepLab-L outperforms all the stateof-the-art methods in both single-scale and multi-scale cases. Our single-scale Axial-DeepLab-L performs 2.4% PQ better than the previous best single-scale Panoptic-DeepLab (X-71) [19]. In multi-scale setting, our lightweight AxialDeepLab-L performs better than Panoptic-DeepLab (Auto-DeepLab-XL++), not only on panoptic segmentation (0.8% PQ) and instance segmentation (0.3% AP), but also on semantic segmentation (0.8% mIoU), the task that AutoDeepLab [57] was searched for. Additionally, to the best of our knowledge, our Axial-DeepLab-L attains the best single-model semantic segmentation result.
+4.4 Cityscapes
+Val set: In Tab. 5 (a), we report our Cityscapes validation set results. Without using extra data (i.e., only Cityscapes Ô¨Åne annotation), our Axial-DeepLab achieves 65.1% PQ, which is 1% better than the current best bottom-up PanopticDeepLab [19] and 3.1% better than proposal-based AdaptIS [77]. When using extra data (e.g., Mapillary Vistas [62]), our multi-scale Axial-DeepLab-XL attains 68.5% PQ, 1.5% better than Panoptic-DeepLab [19] and 3.5% better than Seamless [68]. Our instance segmentation and semantic segmentation results are respectively 1.7% and 1.5% better than Panoptic-DeepLab [19].
+Test set: Tab. 5 (b) shows our test set results. Without extra data, AxialDeepLab-XL attains 62.8% PQ, setting a new state-of-the-art result. Our model further achieves 66.6% PQ, 39.6% AP, and 84.1% mIoU with Mapillary Vistas pretraining. Note that Panoptic-DeepLab [19] adopts the trick of output stride 8 during inference on test set, making their M-Adds comparable to our XL models.
+4.5 Ablation Studies
+We perform ablation studies on Cityscapes validation set.
+
+Axial-DeepLab
+
+13
+
+Table 5. Cityscapes val set and test set. MS: Multi-scale inputs. C: Cityscapes coarse annotation. V: Cityscapes video. MV: Mapillary Vistas
+
+(a) Cityscapes validation set
+
+(b) Cityscapes test set
+
+Method
+
+Extra Data MS PQ AP mIoU Method
+
+Extra Data PQ AP mIoU
+
+AdaptIS [77]
+SSAP [28] Panoptic-DeepLab [19] Panoptic-DeepLab [19]
+Axial-DeepLab-L Axial-DeepLab-L Axial-DeepLab-XL Axial-DeepLab-XL
+
+SpatialFlow [16] Seamless [68]
+
+COCO MV
+
+Panoptic-DeepLab [19] MV Panoptic-DeepLab [19] MV
+
+ 62.0 36.3 79.2
+ 61.1 37.3 63.0 35.3 80.5
+ 64.1 38.5 81.5
+63.9 35.8 81.0  64.7 37.9 81.5
+64.4 36.7 80.6  65.1 39.0 81.1
+ 62.5 - 65.0 - 80.7
+65.3 38.8 82.5  67.0 42.5 83.1
+
+GFF-Net [51] Zhu et al . [97]
+
+- - 82.3 C, V, MV - - 83.5
+
+AdaptIS [77] UPSNet [87] PANet [59] PolyTransform [54]
+
+COCO COCO COCO
+
+- 32.5 - 33.0 - 36.4 - 40.1
+
+SSAP [28] Li et al . [50] Panoptic-DeepLab [19] TASCNet [49] Seamless [68] Li et al . [50] Panoptic-DeepLab [19]
+
+COCO MV
+COCO MV
+
+58.9 32.7 61.0 - 62.3 34.6 79.4 60.7 - 62.6 - 63.3 - 65.5 39.0 84.2
+
+Axial-DeepLab-L Axial-DeepLab-L Axial-DeepLab-XL Axial-DeepLab-XL
+
+MV
+
+66.5 40.2 83.2 Axial-DeepLab-L
+
+MV  67.7 42.9 83.8 Axial-DeepLab-XL
+
+MV
+
+67.8 41.9 84.2 Axial-DeepLab-L
+
+MV  68.5 44.2 84.6 Axial-DeepLab-XL
+
+62.7 33.3 79.5 62.8 34.0 79.9 MV 65.6 38.1 83.1 MV 66.6 39.6 84.1
+
+Table 6. Ablating self-attention variants on Cityscapes val set. ASPP: Atrous spatial pyramid pooling. PS: Our position-sensitive self-attention
+
+Backbone
+
+ASPP PS Params M-Adds PQ AP mIoU
+
+ResNet-50 [31] (our impl.) ResNet-50 [31] (our impl.)  Attention [65] (our impl.) Attention [65] (our impl.) 
+
+24.8M 374.8B 58.1 30.0 73.3 30.0M 390.0B 59.8 32.6 77.8 17.3M 317.7B 58.7 31.9 75.8 22.5M 332.9B 60.9 30.0 78.2
+
+PS-Attention PS-Attention
+
+ 17.3M 326.7B 59.9 32.2 76.3   22.5M 341.9B 61.5 33.1 79.1
+
+Axial-DeepLab-S
+
+ 12.1M 220.8B 62.6 34.9 80.5
+
+Axial-DeepLab-M Axial-DeepLab-L Axial-DeepLab-XL
+
+ 25.9M 419.6B 63.1 35.6 80.3  44.9M 687.4B 63.9 35.8 81.0  173.0M 2446.8B 64.4 36.7 80.6
+
+Importance of Position-Sensitivity and Axial-Attention: In Tab. 1, we experiment with attention models on ImageNet. In this ablation study, we transfer them to Cityscapes segmentation tasks. As shown in Tab. 6, all variants outperform ResNet-50 [31]. Position-sensitive attention performs better than previous self-attention [65], which aligns with ImageNet results in Tab. 1. However, employing axial-attention, which is on-par with position-sensitive attention on ImageNet, gives more than 1% boosts on all three segmentation tasks (in PQ, AP, and mIoU), without ASPP, and with fewer parameters and M-Adds, suggesting that the ability to encode long range context of axial-attention signiÔ¨Åcantly improves the performance on segmentation tasks with large input images.
+
+14
+
+H. Wang et al.
+
+Table 7. Varying axial-attention span on Cityscapes val set
+
+Backbone
+ResNet-101
+Axial-ResNet-L Axial-ResNet-L Axial-ResNet-L Axial-ResNet-L Axial-ResNet-L
+
+Span
+-
+5√ó5 9√ó9 17 √ó 17 33 √ó 33 65 √ó 65
+
+Params
+43.8M
+44.9M 44.9M 44.9M 44.9M 44.9M
+
+M-Adds
+530.0B
+617.4B 622.1B 631.5B 650.2B 687.4B
+
+PQ
+59.9
+59.1 61.2 62.8 63.8 64.2
+
+AP
+31.9
+31.3 31.1 34.0 35.9 36.3
+
+mIoU
+74.6
+74.5 77.6 79.5 80.2 80.6
+
+Importance of Axial-Attention Span: In Tab. 7, we vary the span m (i.e., spatial extent of local regions in an axial block), without ASPP. We observe that a larger span consistently improves the performance at marginal costs.
+5 Conclusion and Discussion
+In this work, we have shown the eÔ¨Äectiveness of proposed position-sensitive axialattention on image classiÔ¨Åcation and segmentation tasks. On ImageNet, our Axial-ResNet, formed by stacking axial-attention blocks, achieves state-of-theart results among stand-alone self-attention models. We further convert AxialResNet to Axial-DeepLab for bottom-up segmentation tasks, and also show state-of-the-art performance on several benchmarks, including COCO, Mapillary Vistas, and Cityscapes. We hope our promising results could establish that axial-attention is an eÔ¨Äective building block for modern computer vision models.
+Our method bears a similarity to decoupled convolution [41], which factorizes a depthwise convolution [75,35,20] to a column convolution and a row convolution. This operation could also theoretically achieve a large receptive Ô¨Åeld, but its convolutional template matching nature limits the capacity of modeling multiscale interactions. Another related method is deformable convolution [23,96,27], where each point attends to a few points dynamically on an image. However, deformable convolution does not make use of key-dependent positional bias or content-based relation. In addition, axial-attention propagates information densely, and more eÔ¨Éciently along the height- and width-axis sequentially.
+Although our axial-attention model saves M-Adds, it runs slower than convolutional counterparts, as also observed by [65]. This is due to the lack of specialized kernels on various accelerators for the time being. This might well be improved if the community considers axial-attention as a plausible direction.
+Acknowledgments
+We thank Niki Parmar for discussion and support; Ashish Vaswani, Xuhui Jia, Raviteja Vemulapalli, Zhuoran Shen for their insightful comments and suggestions; Maxwell Collins and Blake Hechtman for technical support. This work is supported by Google Faculty Research Award and NSF 1763705.
+
+Axial-DeepLab
+
+15
+
+References
+
+1. Abadi, M., Barham, P., Chen, J., Chen, Z., Davis, A., Dean, J., Devin, M., Ghemawat, S., Irving, G., Isard, M., Kudlur, M., Levenberg, J., Monga, R., Moore, S., Murray, D.G., Steiner, B., Tucker, P., Vasudevan, V., Warden, P., Wicke, M., Yu, Y., Zheng, X.: TensorÔ¨Çow: A system for large-scale machine learning. In: Proceedings of the 12th USENIX Conference on Operating Systems Design and Implementation (2016) 8
+2. Ackley, D.H., Hinton, G.E., Sejnowski, T.J.: A learning algorithm for boltzmann machines. Cognitive science 9(1), 147‚Äì169 (1985) 1
+3. Bahdanau, D., Cho, K., Bengio, Y.: Neural machine translation by jointly learning to align and translate. arXiv:1409.0473 (2014) 3
+4. Bai, M., Urtasun, R.: Deep watershed transform for instance segmentation. In: CVPR (2017) 3
+5. Ballard, D.H.: Generalizing the hough transform to detect arbitrary shapes. Pattern Recognition (1981) 3
+6. Bello, I., Zoph, B., Vaswani, A., Shlens, J., Le, Q.V.: Attention augmented convolutional networks. In: ICCV (2019) 2, 3
+7. Bonde, U., Alcantarilla, P.F., Leutenegger, S.: Towards bounding-box free panoptic segmentation. arXiv:2002.07705 (2020) 3
+8. Brock, A., Donahue, J., Simonyan, K.: Large scale gan training for high Ô¨Ådelity natural image synthesis. In: ICLR (2019) 4
+9. Buades, A., Coll, B., Morel, J.M.: A non-local algorithm for image denoising. In: CVPR (2005) 3, 4
+10. Chan, W., Jaitly, N., Le, Q., Vinyals, O.: Listen, attend and spell: A neural network for large vocabulary conversational speech recognition. In: ICASSP (2016) 2
+11. Chen, L.C., Collins, M., Zhu, Y., Papandreou, G., Zoph, B., SchroÔ¨Ä, F., Adam, H., Shlens, J.: Searching for eÔ¨Écient multi-scale architectures for dense image prediction. In: NeurIPS (2018) 2
+12. Chen, L.C., Papandreou, G., Kokkinos, I., Murphy, K., Yuille, A.L.: Semantic image segmentation with deep convolutional nets and fully connected crfs. In: ICLR (2015) 1, 3, 7
+13. Chen, L.C., Papandreou, G., Kokkinos, I., Murphy, K., Yuille, A.L.: Deeplab: Semantic image segmentation with deep convolutional nets, atrous convolution, and fully connected crfs. IEEE TPAMI (2017) 3, 7
+14. Chen, L.C., Papandreou, G., SchroÔ¨Ä, F., Adam, H.: Rethinking atrous convolution for semantic image segmentation. arXiv:1706.05587 (2017) 3, 7
+15. Chen, L.C., Zhu, Y., Papandreou, G., SchroÔ¨Ä, F., Adam, H.: Encoder-decoder with atrous separable convolution for semantic image segmentation. In: ECCV (2018) 3
+16. Chen, Q., Cheng, A., He, X., Wang, P., Cheng, J.: SpatialÔ¨Çow: Bridging all tasks for panoptic segmentation. arXiv:1910.08787 (2019) 11, 13
+17. Chen, Y., Kalantidis, Y., Li, J., Yan, S., Feng, J.: AÀÜ 2-nets: Double attention networks. In: NeurIPS (2018) 3, 4
+18. Cheng, B., Collins, M.D., Zhu, Y., Liu, T., Huang, T.S., Adam, H., Chen, L.C.: Panoptic-deeplab. In: ICCV COCO + Mapillary Joint Recognition Challenge Workshop (2019) 2
+19. Cheng, B., Collins, M.D., Zhu, Y., Liu, T., Huang, T.S., Adam, H., Chen, L.C.: Panoptic-deeplab: A simple, strong, and fast baseline for bottom-up panoptic segmentation. In: CVPR (2020) 2, 3, 7, 8, 10, 11, 12, 13
+
+16
+
+H. Wang et al.
+
+20. Chollet, F.: Xception: Deep learning with depthwise separable convolutions. In: CVPR (2017) 12, 14
+21. Chorowski, J.K., Bahdanau, D., Serdyuk, D., Cho, K., Bengio, Y.: Attention-based models for speech recognition. In: NeurIPS (2015) 2
+22. Cordts, M., Omran, M., Ramos, S., Rehfeld, T., Enzweiler, M., Benenson, R., Franke, U., Roth, S., Schiele, B.: The cityscapes dataset for semantic urban scene understanding. In: CVPR (2016) 2, 8
+23. Dai, J., Qi, H., Xiong, Y., Li, Y., Zhang, G., Hu, H., Wei, Y.: Deformable convolutional networks. In: ICCV (2017) 11, 14
+24. Dai, Z., Yang, Z., Yang, Y., Carbonell, J.G., Le, Q., Salakhutdinov, R.: Transformer-xl: Attentive language models beyond a Ô¨Åxed-length context. In: ACL (2019) 3
+25. Devlin, J., Chang, M.W., Lee, K., Toutanova, K.: Bert: Pre-training of deep bidirectional transformers for language understanding. arXiv:1810.04805 (2018) 3
+26. Fu, J., Liu, J., Tian, H., Li, Y., Bao, Y., Fang, Z., Lu, H.: Dual attention network for scene segmentation. In: CVPR (2019) 4
+27. Gao, H., Zhu, X., Lin, S., Dai, J.: Deformable kernels: Adapting eÔ¨Äective receptive Ô¨Åelds for object deformation. arXiv:1910.02940 (2019) 14
+28. Gao, N., Shan, Y., Wang, Y., Zhao, X., Yu, Y., Yang, M., Huang, K.: Ssap: Singleshot instance segmentation with aÔ¨Énity pyramid. In: ICCV (2019) 3, 9, 10, 11, 13
+29. Goyal, P., Dolla¬¥r, P., Girshick, R., Noordhuis, P., Wesolowski, L., Kyrola, A., Tulloch, A., Jia, Y., He, K.: Accurate, large minibatch sgd: Training imagenet in 1 hour. arXiv:1706.02677 (2017) 8
+30. He, K., Gkioxari, G., Dolla¬¥r, P., Girshick, R.: Mask r-cnn. In: ICCV (2017) 3 31. He, K., Zhang, X., Ren, S., Sun, J.: Deep residual learning for image recognition.
+In: CVPR (2016) 2, 7, 8, 9, 10, 13 32. Ho, J., Kalchbrenner, N., Weissenborn, D., Salimans, T.: Axial attention in multi-
+dimensional transformers. arXiv:1912.12180 (2019) 2, 4, 6 33. Holschneider, M., Kronland-Martinet, R., Morlet, J., Tchamitchian, P.: A real-time
+algorithm for signal analysis with the help of the wavelet transform. In: Wavelets, pp. 286‚Äì297. Springer (1990) 1 34. Howard, A., Sandler, M., Chu, G., Chen, L.C., Chen, B., Tan, M., Wang, W., Zhu, Y., Pang, R., Vasudevan, V., et al.: Searching for mobilenetv3. In: ICCV (2019) 8 35. Howard, A.G., Zhu, M., Chen, B., Kalenichenko, D., Wang, W., Weyand, T., Andreetto, M., Adam, H.: Mobilenets: EÔ¨Écient convolutional neural networks for mobile vision applications. arXiv:1704.04861 (2017) 8, 14 36. Hu, H., Gu, J., Zhang, Z., Dai, J., Wei, Y.: Relation networks for object detection. In: CVPR (2018) 2 37. Hu, H., Zhang, Z., Xie, Z., Lin, S.: Local relation networks for image recognition. In: ICCV (2019) 2, 4, 9 38. Huang, C.A., Vaswani, A., Uszkoreit, J., Simon, I., Hawthorne, C., Shazeer, N., Dai, A.M., HoÔ¨Äman, M.D., Dinculescu, M., Eck, D.: Music transformer: Generating music with long-term structure. In: ICLR (2019) 3 39. Huang, Z., Wang, X., Huang, L., Huang, C., Wei, Y., Liu, W.: Ccnet: Criss-cross attention for semantic segmentation. In: ICCV (2019) 2, 4, 6 40. IoÔ¨Äe, S., Szegedy, C.: Batch normalization: accelerating deep network training by reducing internal covariate shift. In: ICML (2015) 8 41. Jaderberg, M., Vedaldi, A., Zisserman, A.: Speeding up convolutional neural networks with low rank expansions. In: BMVC (2014) 14
+
+Axial-DeepLab
+
+17
+
+42. Kendall, A., Gal, Y., Cipolla, R.: Multi-task learning using uncertainty to weigh losses for scene geometry and semantics. In: CVPR (2018) 3
+43. Keuper, M., Levinkov, E., Bonneel, N., Lavou¬¥e, G., Brox, T., Andres, B.: EÔ¨Écient decomposition of image and mesh graphs by lifted multicuts. In: ICCV (2015) 3
+44. Kirillov, A., Girshick, R., He, K., Dolla¬¥r, P.: Panoptic feature pyramid networks. In: CVPR (2019) 3, 11
+45. Kirillov, A., He, K., Girshick, R., Rother, C., Dolla¬¥r, P.: Panoptic segmentation. In: CVPR (2019) 2, 8
+46. Krizhevsky, A., Sutskever, I., Hinton, G.E.: Imagenet classiÔ¨Åcation with deep convolutional neural networks. In: NeurIPS (2012) 1
+47. LeCun, Y., Bottou, L., Bengio, Y., HaÔ¨Äner, P.: Gradient-based learning applied to document recognition. Proceedings of the IEEE 86(11), 2278‚Äì2324 (1998) 1
+48. Leibe, B., Leonardis, A., Schiele, B.: Combined object categorization and segmentation with an implicit shape model. In: Workshop on statistical learning in computer vision, ECCV (2004) 3
+49. Li, J., Raventos, A., Bhargava, A., Tagawa, T., Gaidon, A.: Learning to fuse things and stuÔ¨Ä. arXiv:1812.01192 (2018) 3, 11, 12, 13
+50. Li, Q., Qi, X., Torr, P.H.: Unifying training and inference for panoptic segmentation. arXiv:2001.04982 (2020) 3, 11, 13
+51. Li, X., Zhao, H., Han, L., Tong, Y., Yang, K.: GÔ¨Ä: Gated fully fusion for semantic segmentation. arXiv:1904.01803 (2019) 13
+52. Li, Y., Chen, X., Zhu, Z., Xie, L., Huang, G., Du, D., Wang, X.: Attention-guided uniÔ¨Åed network for panoptic segmentation. In: CVPR (2019) 3, 11
+53. Li, Y., Jin, X., Mei, J., Lian, X., Yang, L., Xie, C., Yu, Q., Zhou, Y., Bai, S., Yuille, A.: Neural architecture search for lightweight non-local networks. In: CVPR (2020) 3, 4
+54. Liang, J., Homayounfar, N., Ma, W.C., Xiong, Y., Hu, R., Urtasun, R.: Polytransform: Deep polygon transformer for instance segmentation. arXiv:1912.02801 (2019) 13
+55. Lin, T.Y., Dolla¬¥r, P., Girshick, R., He, K., Hariharan, B., Belongie, S.: Feature pyramid networks for object detection. In: CVPR (2017) 3
+56. Lin, T.Y., Maire, M., Belongie, S., Hays, J., Perona, P., Ramanan, D., Dolla¬¥r, P., Zitnick, C.L.: Microsoft coco: Common objects in context. In: ECCV (2014) 2, 8, 9
+57. Liu, C., Chen, L.C., SchroÔ¨Ä, F., Adam, H., Hua, W., Yuille, A., Fei-Fei, L.: Autodeeplab: Hierarchical neural architecture search for semantic image segmentation. In: CVPR (2019) 2, 12
+58. Liu, L., Jiang, H., He, P., Chen, W., Liu, X., Gao, J., Han, J.: On the variance of the adaptive learning rate and beyond. In: ICLR (2020) 8
+59. Liu, S., Qi, L., Qin, H., Shi, J., Jia, J.: Path aggregation network for instance segmentation. In: CVPR (2018) 13
+60. Liu, Y., Yang, S., Li, B., Zhou, W., Xu, J., Li, H., Lu, Y.: AÔ¨Énity derivation and graph merge for instance segmentation. In: ECCV (2018) 3
+61. Liu1, H., Peng, C., Yu, C., Wang, J., Liu, X., Yu, G., Jiang, W.: An end-to-end network for panoptic segmentation. In: CVPR (2019) 3
+62. Neuhold, G., Ollmann, T., Rota Bulo, S., Kontschieder, P.: The mapillary vistas dataset for semantic understanding of street scenes. In: ICCV (2017) 2, 8, 11, 12
+63. Neven, D., Brabandere, B.D., Proesmans, M., Gool, L.V.: Instance segmentation by jointly optimizing spatial embeddings and clustering bandwidth. In: CVPR (2019) 3
+
+18
+
+H. Wang et al.
+
+64. Papandreou, G., Kokkinos, I., Savalle, P.A.: Modeling local and global deformations in deep learning: Epitomic convolution, multiple instance learning, and sliding window detection. In: CVPR (2015) 1
+65. Parmar, N., Ramachandran, P., Vaswani, A., Bello, I., Levskaya, A., Shlens, J.: Stand-alone self-attention in vision models. In: NeurIPS (2019) 2, 4, 5, 6, 7, 8, 9, 10, 13, 14
+66. Parmar, N., Vaswani, A., Uszkoreit, J., Kaiser, L., Shazeer, N., Ku, A., Tran, D.: Image transformer. In: ICML (2018) 3
+67. Peng, C., Zhang, X., Yu, G., Luo, G., Sun, J.: Large kernel matters‚Äìimprove semantic segmentation by global convolutional network. In: CVPR (2017) 1
+68. Porzi, L., Bulo`, S.R., Colovic, A., Kontschieder, P.: Seamless scene segmentation. In: CVPR (2019) 3, 12, 13
+69. Qi, H., Zhang, Z., Xiao, B., Hu, H., Cheng, B., Wei, Y., Dai, J.: Deformable convolutional networks ‚Äì coco detection and segmentation challenge 2017 entry. ICCV COCO Challenge Workshop (2017) 12
+70. Russakovsky, O., Deng, J., Su, H., Krause, J., Satheesh, S., Ma, S., Huang, Z., Karpathy, A., Khosla, A., Bernstein, M.S., Berg, A.C., Fei-Fei, L.: Imagenet large scale visual recognition challenge. IJCV 115, 211‚Äì252 (2015) 2, 8
+71. Sandler, M., Howard, A., Zhu, M., Zhmoginov, A., Chen, L.C.: Mobilenetv2: Inverted residuals and linear bottlenecks. In: CVPR (2018) 8
+72. Shaw, P., Uszkoreit, J., Vaswani, A.: Self-attention with relative position representations. In: NAACL (2018) 3
+73. Shen, Z., Zhang, M., Zhao, H., Yi, S., Li, H.: EÔ¨Écient attention: Attention with linear complexities. arXiv:1812.01243 (2018) 4
+74. Shensa, M.J.: The discrete wavelet transform: wedding the a trous and mallat algorithms. Signal Processing, IEEE Transactions on 40(10), 2464‚Äì2482 (1992) 1
+75. Sifre, L.: Rigid-motion scattering for image classiÔ¨Åcation. PhD thesis (2014) 14 76. Simonyan, K., Zisserman, A.: Very deep convolutional networks for large-scale
+image recognition. arXiv:1409.1556 (2014) 8 77. SoÔ¨Åiuk, K., Barinova, O., Konushin, A.: Adaptis: Adaptive instance selection net-
+work. In: ICCV (2019) 3, 11, 12, 13 78. Szegedy, C., Vanhoucke, V., IoÔ¨Äe, S., Shlens, J., Wojna, Z.: Rethinking the incep-
+tion architecture for computer vision. In: CVPR (2016) 8 79. Uhrig, J., Rehder, E., Fro¬®hlich, B., Franke, U., Brox, T.: Box2pix: Single-shot
+instance segmentation by assigning pixels to object boxes. In: IEEE Intelligent Vehicles Symposium (IV) (2018) 3 80. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.N., Kaiser, L., Polosukhin, I.: Attention is all you need. In: NeurIPS (2017) 2, 3 81. Vincent, L., Soille, P.: Watersheds in digital spaces: an eÔ¨Écient algorithm based on immersion simulations. IEEE TPAMI (1991) 3 82. Wang, H., Kembhavi, A., Farhadi, A., Yuille, A.L., Rastegari, M.: Elastic: improving cnns with dynamic scaling policies. In: CVPR (2019) 1 83. Wang, J., Sun, K., Cheng, T., Jiang, B., Deng, C., Zhao, Y., Liu, D., Mu, Y., Tan, M., Wang, X., Liu, W., Xiao, B.: Deep high-resolution representation learning for visual recognition. arXiv:1908.07919 (2019) 12 84. Wang, X., Girshick, R., Gupta, A., He, K.: Non-local neural networks. In: CVPR (2018) 2, 3, 4 85. Wu, Y., Schuster, M., Chen, Z., Le, Q.V., Norouzi, M., Macherey, W., Krikun, M., Cao, Y., Gao, Q., Macherey, K., et al.: Google‚Äôs neural machine translation system: Bridging the gap between human and machine translation. arXiv:1609.08144 (2016) 2
+
+Axial-DeepLab
+
+19
+
+86. Xie, C., Wu, Y., Maaten, L.v.d., Yuille, A.L., He, K.: Feature denoising for improving adversarial robustness. In: CVPR (2019) 2, 4
+87. Xiong, Y., Liao, R., Zhao, H., Hu, R., Bai, M., Yumer, E., Urtasun, R.: Upsnet: A uniÔ¨Åed panoptic segmentation network. In: CVPR (2019) 3, 11, 13
+88. Xu, K., Ba, J., Kiros, R., Cho, K., Courville, A., Salakhudinov, R., Zemel, R., Bengio, Y.: Show, attend and tell: Neural image caption generation with visual attention. In: ICML (2015) 2
+89. Yang, T.J., Collins, M.D., Zhu, Y., Hwang, J.J., Liu, T., Zhang, X., Sze, V., Papandreou, G., Chen, L.C.: Deeperlab: Single-shot image parser. arXiv:1902.05093 (2019) 3, 8, 9, 10, 11, 12
+90. Yang, Y., Li, H., Li, X., Zhao, Q., Wu, J., Lin, Z.: Sognet: Scene overlap graph network for panoptic segmentation. arXiv:1911.07527 (2019) 11
+91. Zhang, H., Goodfellow, I., Metaxas, D., Odena, A.: Self-attention generative adversarial networks. arXiv:1805.08318 (2018) 4
+92. Zhang, M., Lucas, J., Ba, J., Hinton, G.E.: Lookahead optimizer: k steps forward, 1 step back. In: NeurIPS (2019) 8
+93. Zhang, R.: Making convolutional networks shift-invariant again. In: ICML (2019) 1
+94. Zhao, H., Shi, J., Qi, X., Wang, X., Jia, J.: Pyramid scene parsing network. In: CVPR (2017) 1
+95. Zhu, X., Cheng, D., Zhang, Z., Lin, S., Dai, J.: An empirical study of spatial attention mechanisms in deep networks. In: ICCV. pp. 6688‚Äì6697 (2019) 4
+96. Zhu, X., Hu, H., Lin, S., Dai, J.: Deformable convnets v2: More deformable, better results. In: CVPR (2019) 14
+97. Zhu, Y., Sapra, K., Reda, F.A., Shih, K.J., Newsam, S., Tao, A., Catanzaro, B.: Improving semantic segmentation via video propagation and label relaxation. In: CVPR (2019) 13
+98. Zhu, Z., Xu, M., Bai, S., Huang, T., Bai, X.: Asymmetric non-local neural networks for semantic segmentation. In: CVPR (2019) 4
+99. Zoph, B., Le, Q.V.: Neural architecture search with reinforcement learning. In: ICLR (2017) 2
+

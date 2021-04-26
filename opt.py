@@ -6,7 +6,7 @@ def get_opts():
 
     parser.add_argument('--num_gpus', type=int, default=1,
                         help='number of gpus')
-    parser.add_argument('--batch', type=int, default=1,
+    parser.add_argument('--batch', type=int, default=2,
                         help='number of batch to be used in training')
     parser.add_argument('--n_classes', type=int, default=8,
                         help='number of classes to be used in training')
@@ -31,14 +31,14 @@ def get_opts():
                         help='which type to load .pth')
     parser.add_argument('--imgs_dir', type=str,
                         # default='/home/sj/workspace/m/MA_NET/LITS/train/train_small/',
-                        # default='/opt/data/private/data/chao_data/Train_Sets/',
-                        default='/home/sj/workspace/data/chao_data/Train_Sets/',
+                        default='/opt/data/private/data/chao_data/Train_Sets/',
+                        # default='/home/sj/workspace/data/chao_data/Train_Sets/',
                         # default='/home/sj/workspace/data/LITS-Challenge-Train-Data/data/',
                         help='image directory of history dataset')
     parser.add_argument('--masks_dir', type=str,
                         # default='/home/sj/workspace/m/MA_NET/LITS/train/target_small/',
-                        # default='/opt/data/private/data/chao_data/Train_Sets/',
-                        default='/home/sj/workspace/data/chao_data/Train_Sets/',
+                        default='/opt/data/private/data/chao_data/Train_Sets/',
+                        # default='/home/sj/workspace/data/chao_data/Train_Sets/',
                         # default='/home/sj/workspace/data/LITS-Challenge-Train-Data/label/',
                         help='image directory of history masks dataset')
     parser.add_argument('--prefixes_to_ignore', nargs='+', type=str, default=['loss'],
@@ -50,7 +50,7 @@ def get_opts():
                         help='number of lr to be used in training')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='learning rate momentum')
-    parser.add_argument('--num_epochs', type=int, default=200,
+    parser.add_argument('--num_epochs', type=int, default=2000,
                         help='number of training epochs')
     parser.add_argument('--exp_name', type=str, default='scaa',
                         help='experiment name')

@@ -1,0 +1,440 @@
+Sparse Sinkhorn Attention
+
+arXiv:2002.11296v1 [cs.LG] 26 Feb 2020
+
+Yi Tay 1 Dara Bahri 1 Liu Yang 1 Donald Metzler 1 Da-Cheng Juan 1
+
+Abstract
+We propose Sparse Sinkhorn Attention, a new efﬁcient and sparse method for learning to attend. Our method is based on differentiable sorting of internal representations. Concretely, we introduce a meta sorting network that learns to generate latent permutations over sequences. Given sorted sequences, we are then able to compute quasi-global attention with only local windows, improving the memory efﬁciency of the attention module. To this end, we propose new algorithmic innovations such as Causal Sinkhorn Balancing and SortCut, a dynamic sequence truncation method for tailoring Sinkhorn Attention for encoding and/or decoding purposes. Via extensive experiments on algorithmic seq2seq sorting, language modeling, pixel-wise image generation, document classiﬁcation and natural language inference, we demonstrate that our memory efﬁcient Sinkhorn Attention method is competitive with vanilla attention and consistently outperforms recently proposed efﬁcient Transformer models such as Sparse Transformers.
+
+1. Introduction
+
+Learning sparse and efﬁcient attention mechanisms has recently garnered considerable interest (Child et al., 2019; Kitaev et al., 2020). While existing state-of-the-art attention models have typically relied on dense, fully-connected attention graphs (Vaswani et al., 2017), these methods are often sub-optimal for two key reasons. First, large memory costs are incurred due to the quadratic complexity at the attention layer. Second, soft dense attention may suffer when , the sequence length, is large and noisy. Hence, at times, sparse attentive outputs that are reminiscent of hard attention methods, may serve as a desirable inductive bias (Xu et al., 2015).
+
+This paper proposes a new method for (1) reducing the memory complexity of the dot-product attention mechanism and
+
+1Google AI. Correspondence to: tay@google.com>.
+
+Yi Tay <yi-
+
+Preprint. Copyright 2020 by the author(s).
+
+(2) learning sparse attention outputs. Our method is based on a novel idea of differentiable sorting of internal representations within the self-attention module. Our method, which we call Sparse Sinkhorn Attention, incorporates a meta sorting network that learns to re arrange and sort input sequences. With this new sorted sequence, attention computation is reduced substantially even when considering computation only within the local neighborhood, emulating a global effect even with solely local computation of context windows.
+Our method is comprised of (1) a parameterized meta sorting network S for dynamically generating block-wise permutation matrices and (2) a standard local attention module that receives block-wise permuted input sequences for attention computation. Concretely, at the heart of our sorting network lives a differentiable Sinkhorn balancing mechanism (Adams & Zemel, 2011; Mena et al., 2018), which normalizes permutation matrices to belong to the Birkhoff polytope, the set of doubly stochastic matrices (Sinkhorn, 1964).
+As such, given the block-sorted input sequences, the local attention module is able to compute attention weights beyond the default local neighborhood without incurring additional computation costs. Extensive experimental results across a potpourri of language, vision and arithmetic tasks demonstrate that Sparse Sinkhorn Attention outperforms strong baselines such as standard local attention and sparse attention Transformers (Child et al., 2019).
+Notably, our proposed method is general purpose in nature and is applicable to sequence encoding, sequence decoding or seq2seq tasks (Sutskever et al., 2014). In order to adapt Sinkhorn balancing to decoding tasks, we propose a causal variant, i.e., Causal Sinkhorn Balancing. Moreover, for further improvement to encoding efﬁciency, we propose an additional SORTCUT variant of our proposed method, which dynamically truncates sequences in a data-driven manner based on a user-deﬁned budget hyperparameter. Finally, we propose a Mixture model between the Sparse Sinkhorn Attention and standard vanilla attention, leading to further performance improvements.
+Our method reduces the memory complexity from O( 2) to O(B2 + NB2 ) where B = NB . When is large, this factorization of sequence length brings about substantial savings
+
+Sparse Sinkhorn Attention
+
+in terms of memory complexity1. Our SORTCUT variant further reduces complexity to linear-time, i.e., O( Nk) where Nk is a user deﬁned budget hyperparameter and Nk <<< .
+We also equip state-of-the-art Transformer models with our proposed Sparse Sinkhorn Attention, evaluating Sinkhorn Transformers on several large-scale sequence modeling tasks including language modeling on the One Billion Word Corpus (Chelba et al., 2013), pixel-wise image generation and document classiﬁcation. Our proposed Sinkhorn attention remains competitive to the dense fully-connected attention while outperforming local attention and Sparse Transformers. While differentiable neural-based sorting has demonstrated some proof-of-concept promise (Mena et al., 2018), this work demonstrates the ﬁrst successful application in real large-scale problems.
+To summarize, the contributions of this paper are as follows:
+• We propose Sparse Sinkhorn Attention, a new attention method based on dynamic, learnable sorting of internal representations. Our method is based on differentiable Sinkhorn balancing and is the ﬁrst successful application of differentiable sorting on large-scale tasks.
+• We also propose (1) Causal Sinkhorn balancing for autoregressive sequence decoding and (2) a new SORTCUT encoding scheme that further improves encoding efﬁciency by dynamically truncating sequences during attention computation.
+• Our proposed methods reduce the memory complexity of dot-product attention while remaining competitive with or outperforming dense vanilla attention.
+• We conduct extensive experiments on large-scale generative modeling tasks. On all tasks, Sinkhorn Transformers match and/or outperform vanilla Transformers while consistently outperforming Sparse Transformers (Child et al., 2019) and Local Attention Transformers.
+2. Related Work
+A natural and intuitive yet naive method typically employed for efﬁciently learning attention involves using a ﬁxed window size. This method, usually referred to as local attention (Luong et al., 2015), has served as a simple and quick ﬁx to run attention models on long sequences. An obvious weakness is that tokens in a window do not have access to context outside the window, restricting the expressiveness and its capability to model long-term dependencies. The study of window (or block-based) local attention has also been an emerging ﬁeld of research (Shen et al., 2018b; Tay
+1As an illustration, when = 1024 and NB = 64, this results in a memory saving factor of 240 times.
+
+et al., 2019; Qiu et al., 2020; Child et al., 2019; Parmar et al., 2018).
+Building upon the notion of local windows, Sparse Transformer (Child et al., 2019) proposed factorizing the attention computation into local and strided operations, delegating different heads to focus on different sparse patterns. They demonstrate promising results, establishing Sparse Transformer as one of the canonical methods2 for efﬁcient attention computation.
+While our method also relies on sequence partitioning, we note that there have been several orthogonal but related efforts. Reformer (Kitaev et al., 2020), proposes locality sensitive hashing as a means to reduce the memory complexity of self-attention. Transformer-XL (Dai et al., 2019) adopts recurrence to cache hidden states across long sequences, which spurred further interest in modeling and compression of long term dependencies (Rae et al., 2020). Star Transformer (Guo et al., 2019) performs attention sparsiﬁcation by converting the dense graph into a starshaped topology using a shared relay node. However, while this method enables linear-time complexity, its setup makes it difﬁcult for causal masking, making the Star Transformer useful only for encoding.
+Learning sparse outputs in attention models has also garnered reasonable interest. The key idea behind sparse weights (i.e., hard attention) is that they enable the model to only focus on a limited number of items at a time (Xu et al., 2015; Shen et al., 2018a). This can be a useful inductive bias when the input sequence is long and/or noisy, serving as a denoising ﬁlter. Moreover, hard attention can also improve inference speeds, as demonstrated by methods such as Sparsemax (Martins & Astudillo, 2016). Along a similar vein, this is also reminiscent of Sparse Mixture of Experts (Shazeer et al., 2017), which performs a sparse selection of outputs (experts) for prediction tasks.
+Our proposed method is not only a new way of learning efﬁcient attention but also a new way of sparsiﬁcation. At the core of our approach lies a Sinkhorn ranking operation (Adams & Zemel, 2011) that is used for learning differentiable rankings over internal representations. Leveraging the Gumbel reparameterization trick (Jang et al., 2016), Gumbel Sinkhorn Networks (Mena et al., 2018) proposed stochastic maximization over the set of possible latent permutations. The core novelty of our work lies in the introduction of neural sorting as a means to sparsify and improve the efﬁciency of well-established attention networks.
+2That said, Sparse Attention requires highly specialized GPU kernels for efﬁcient computation. This generally makes the approach less appealing, e.g., for portability purposes such as running on TPU pods.
+
+Sparse Sinkhorn Attention
+
+3. Sparse Sinkhorn Attention
+In this section, we introduce our proposed Sparse Sinkhorn Attention and provide a high-level overview. In our method, the input sequence X of length is partitioned into Nb blocks in which each block has a length of b tokens. Notably, the original idea of block-based local attention is to allow tokens to only attend to tokens within the same block. However, this restricts the global receptive ﬁeld and limits the ability for local attention models to model long term dependencies.
+
+Query
+Sorted Keys Blocks
+Keys Blocks
+
+Sinkhorn Sorting
+SortNet Input Sequence
+
+Figure 1. Overview of Sparse Sinkhorn Attention. A Meta Sorting Network learns to sort sequences to enable efﬁcient quasi-global local attention.
+
+Our proposed method mitigates this problem by neural sorting of blocks and receptive ﬁelds (neighborhoods). More concretely, instead of attending to tokens in the same block, each token attends to tokens in the newly sorted block, which may actually be far apart in the original unsorted sequence. Sorting blocks instead of individual tokens is also more intuitive, since we do not wish to break connections between nearby tokens, i.e., it would be reasonable for each token to still maintain an approximate neighborhood.
+
+3.1. Learning to Sort
+
+In order to learn to sort, we introduce a Sorting Network (SortNet) for learning relaxed permutation matrices. Since our sorting function is differentiable, the parameters of the SortNet are also trained together in an end-to-end fashion. The SortNet accepts an input sequence of vectors of d dimensions and partitions them into blocks.
+
+X = ψP (X)
+
+(1)
+
+The function ψP (.) is a blockwise pooling operation that maps R ×d → RNB×d and X ∈ RNB×d. In SortNet, we
+
+adopt:
+
+(i+1)∗ B
+
+ψP (X)i =
+
+(Xj )
+
+(2)
+
+j=i∗ B
+
+which is equivalent to taking the sum of embeddings of all tokens belonging to the local window. Our trainable SortNet is deﬁned as follows:
+
+Ri = P (Xi)
+
+(3)
+
+where i refers to the block index. P (.) is an arbitrary parameterized function which accepts an input vector of d dimensions and returns a vector of NB dimensions. For example, we may parameterize P (X) using a two layered feed-forward network with ReLU activations.
+
+P (X) = σ(WBσ(WP (X) + bP ) + bB
+
+(4)
+
+where WP ∈ Rd×d and WB ∈ Rd× B . Essentially, the key idea is that each block learns a projection to NB other blocks, effectively learning the position that it is supposed to be shifted (or permuted) to.
+
+3.1.1. SINKHORN NORMALIZATION
+The matrix R becomes a sorting matrix (or permutation matrix) if it is doubly stochastic (matrix is nonnegative and both rows and columns all sum to 1). More speciﬁcally, a permutation matrix is special case of a doubly stochastic matrix (where rows and columns sum to 1 and all entries are either 0 or 1). Since every permutation matrix is a convex combination of doubly stochastic matrices, we consider learning doubly stochastic matrices as a a form of relaxed permutation matrix.
+We consecutively normalize the rows and columns of the sorting matrix R, i.e., a process of Sinkhorn normalization (Adams & Zemel, 2011). Here, the number of iterations Nk is a user deﬁned hyperparameter. This procedure is described as follows:
+S0(R) = exp(R) Sk(R) = Fc(Fr(Sk−1(R))) S(R) = lim SK (R)
+k→∞
+where Fr, Fc are the row and column wise normalization function deﬁned as follows:
+Fck(X) = Fck−1(X) (X1 1N ) Frk(X) = Frk−1(X) (1 1N X)
+
+where is the element-wise division operator, N is the length of the input matrix and 1 is a vector of ones. In practice, we perform calculations in log domain for improved stability.
+Fck(X) = Fck−1(X) − log(exp(X1 )1N ) Frk(X) = Frk−1(X) − log(1 1N exp(X))
+
+To this end, (Sinkhorn, 1964) shows that iterative normalization of R converges to the doubly stochastic limit if R has support, i.e., a nonnegative matrix with a positive diagonal. Note that since R is nonnegative by design due to the usage of ReLU in P (X). Gradients of the iterative Sinkhorn normalization can be computed, enabling end-to-end training.
+
+Sparse Sinkhorn Attention
+
+3.1.2. NEURAL SORTING OF SEQUENCES
+The generated permutation matrix is then used to sort the input sequence. This is described by a simple matrix multiplication of R against the blocked input sequence X :
+XS = U (RB(X))
+where B(.) converts input sequence into block-wise representations, i.e., X ∈ RNB×(B×d) and U (.) converts the block-wise sequences back into token-wise sequences. U (.) and B(.) can be interpreted as block-wise reshaping operators. Since R is doubly stochastic, multiplying a partitioned sequence by R is equivalent to sorting it.
+
+3.2. Sparse Sinkhorn Attention
+
+The key idea of the Sparse Sinkhorn Attention is to operate on block sorted sequences. Hence, the revised computation for the attention mechanism can now be written as:
+
+Aij =
+
+(QiψS(K)j ) + Qi(K)j ), 0
+
+if j/ = i/ otherwise
+
+ψ(.) is the neural sorting function. Intuitively, this is identical to only enabling attention without a certain local neighborhood, albeit with key values sorted in a block-wise fashion. Subsequently, to compute and soft-select from the value matrix, we compute:
+
+Y = Softmax(A)ψS(V )
+Here, the value matrix is also sorted accordingly. In practice, we share the sorting operator between the key and values. The secondary term Qi(K)j ) is the standard local attention which is added to the mixture. In practice, attention weights are only computed when j/ = i/ .
+
+3.2.1. GUMBEL NOISE
+
+For S(X) to approximate the doubly-stochastic permutation matrix, we leverage the Gumbel categorical reparameterization trick (Jang et al., 2016). Concretely, we inject Gumbel noise into our sorting operator:
+
+(X + )
+
+S(X) = S(
+
+)
+
+τ
+
+where is the injected standard i.i.d Gumbel noise and τ
+
+is the temperature hyperparameter. Intuitively, lowering the temperature brings S(X) to be closer to a permutation matrix with discrete 1s and 0s.
+
+3.2.2. MULTIHEAD SPARSE SINKHORN ATTENTION
+We have previously described the computation of a single Sinkhorn attention head. Similar to dot product attention, utilizing the multi-headed variation is straightforward.
+YG = FH ([Y1 · · · YNH ])
+
+where Yi is the output of the i-th attention head. FH is a linear transform layer with kernels W ∈ R(NH×d)×d. Notably, our implementation learns a sorting network on a
+per head basis, i.e., we do not share the same permutation matrix R across all heads.
+
+3.2.3. MIXTURE MODEL
+Finally, we also consider a variant where the Sinkhorn Attention is used to model an alternate view of the input sequence. Concretely, we leverage the combination of the Sinkhorn attention by mixing it with the vanilla standard dot product attention.
+Y = Softmax(A)ψS(V ) + Softmax(QK )V
+Notably, the mixture mode regresses to the same quadratic complexity of vanilla self-attention. However, we hypothesize that the side network may provide an alternative and diverse view, ultimately improving performance.
+
+3.3. Causal Sparse Sinkhorn Attention
+Our Sinkhorn Attention not only involves sorting sequences but also learning the sorting order in a content-based fashion. To this end, pertaining to learning causal attention (i.e., no information from the future should leak to the present) there are two cases that we have to be careful about. The ﬁrst is that current time steps should never have access to future time steps. Hence, if block i is sorted into a new position p < i, then it is being masked out. This produces an inductive bias that favors sorting orders that produce sorting between nearby blocks.
+
+3.3.1. CAUSAL SORTING NETWORKS
+
+The second case is the content-based and dynamic learning of sorting networks. To maintain the causal property, it would not be plausible to generate permutation matrices based on global information such as the sum of tokens in a sequence. Hence, the matrix R is generated using the cumulative sum of embeddings instead. This is described as follows:
+
+(i∗ B +1)
+
+ψP (X)i =
+
+(Xj) and R = P (ψP (X)) (5)
+
+j=0
+
+Since our attention operates based on the idea of blocks, we use the ﬁrst token in the block as its representative embedding. The cumulative sum operator allows the model to learn a permutation matrix conditioned on all previous context information leading up to the current block.
+
+3.3.2. CAUSAL SINKHORN BALANCING
+We note that the original Sinkhorn balancing requires knowledge of the future tokens for normalization. For causal self-
+
+Sparse Sinkhorn Attention
+
+attention, this is undesirable and non-permissible. Hence, we develop a causal variation of the typical Sinkhorn Balancing method which performs masking of the future while performing iterative normalization.
+Fck(X) = Fck−1(X) − log(exp(M (X)1 )1N ) Frk(X) = Frk−1(X) − log(1 1N M (exp(X)))
+
+proposed Sinkhorn model reduces this to O(B2 + ( NB )2) where B = NB . Essentially, this is equivalent to the memory complexity of local attention models. The SORTCUT
+Sinkhorn encoder has a memory complexity of O( Nk + (NB)2) where Nk is the budget hyperparameter. Since
+<< , the complexity of the SORTCUT encoder can
+B
+be reduced to O( ).
+
+where M (.) is a masking function.
+
+1, if j ≥ i
+
+M (x) =
+
+(6)
+
+0, otherwise
+
+3.3.3. CONNECTIONS TO LEARNABLE SPARSITY
+Due to the computation of causal Sinkhorn, it is expected that some blocks may be masked out, i.e., a block is masked out if it is sorted into an earlier position (i.e, i < i). Essentially, the Sorting Network is also learning which tokens to mask by determining the sorting sequence.
+3.4. SORTCUT Sinkhorn Attention
+We propose an additional variant of our Sparse Sinkhorn Attention which we call SORTCUT. In this method, we propose a post-sorting truncation of the input sequence, essentially performing a hard top-k operation on the input sequence blocks within the computational graph. While most attention models mainly re-weight or assign near-zero weights during training, our method enables us to explicitly and dynamically truncate the input sequence. Speciﬁcally,
+Y = Sof tmax(QψS(K)[:n])ψS(V )[:n]
+where n is the SORTCUT budget hyperparameter. A caveat is that this mode may only be performed on the the Transformer encoder unless self-attention is explicitly computed again for every time-step in autoregressive decoding.
+
+Query
+SortCut Keys
+Sorted Keys Blocks
+Keys Blocks
+
+Sinkhorn Sorting
+SortNet Input Sequence
+
+5. Experiments
+We evaluate the effectiveness of our proposed method for ﬁve tasks, including algorithmic sorting, language modeling, pixel-wise image generation, document classiﬁcation and natural language inference. All our experiments are run on the open source Tensor2Tensor framework (Vaswani et al., 2018). If not stated otherwise, our Sinkhorn Transformers adopt the following global hyperparameters - temperature τ tuned among {0.25, 0.50, 0.75, 1.0}, number of sort iterations tuned among {2, 5, 10, 20}. Block size is largely dependent on the maximum length of the problem domain. Our tasks are designed to capture a wide and diverse range of scenarios such as medium to long range (e.g., 256 to 2048) and also covering a range of encoding focused and/or decoding focused tasks.
+
+5.1. Algorithmic Tasks
+We ﬁrst test our model on a toy algorithmic sorting task. The task is cast as a sequence transduction problem (seq2seq) where the model is tasked to output a sorted sequence of an integer sequence.
+
+Experimental
+
+Setup We
+
+use
+
+the
+
+algorithmic sort problem task in Tensor2Tensor.
+
+In this task, we train our models to sort sequences of
+
+= 256 and evaluate on sequences of length 2 (i.e., 512)
+
+to probe for generalization ability and ensure the models
+
+are not just simply memorizing. We evaluate based on
+
+exact match (EM) and edit distance (the lower the better).
+
+The exact match metric is deﬁned by the number of test
+
+sequences that the model gets entirely correct. The dataset
+
+consists of 100K train examples and 1000 test examples.
+
+For Sinkhorn Transformers, we utilize Sparse Sinkhorn
+
+Attention for both encoding and decoding. We train all
+
+models for 200k steps using the default Transformer base
+
+hyperparameter. We compare against vanilla Transformers,
+
+local attention Transformers and Sparse Transformers.
+
+Figure 2. Overview of the proposed SortCut Encoding Scheme.
+4. Complexity Analysis
+The vanilla Transformer has a self-attention memory complexity of O( 2) where is the input sequence length. Our
+
+Results on Sorting Task Table 1 reports our results on the algorithmic sorting task. Sinkhorn Transformers outperform all other Transformer variants, including the vanilla attention model. Sparse Transformer outperforms dense attention, which demonstrates the usefulness of sparse inductive biases. The local attention performs the worst, which
+
+Sparse Sinkhorn Attention
+
+Model Transformer Local Attention (32) Sparse Transformer (32) Sinkhorn Transformer (8) Sinkhorn Transformer (16) Sinkhorn Transformer (32)
+
+Edit Dist. 0.4252 0.4340 0.4176 0.4156 0.4071 0.4054
+
+EM 45.69 21.12 46.88 43.65 48.23 49.24
+
+Table 1. Evaluation on Algorithmic Sequences of length 256.
+
+demonstrates that some extent of global knowledge is required to solve this task.
+5.2. Language Modeling
+We evaluate on the LM1B (Language Modeling One Billion) dataset (Chelba et al., 2013), a large-scale language modeling benchmark. We evaluate on subword-level and character level language modeling on this task.
+Experimental Setup We implement our model in the Tensor2Tensor framework, using the packed TPU setting. Tokens are split into 32k word pieces and sentences are shufﬂed. For word level language modeling, we use the default Tensor2Tensor hyperparameters3. Concretely, we evaluate two model sizes, BASE and BIG corresponding to lmx base and lmx h2k f8k respectively. All models are trained for 300K steps on 16 TPU V2 Chips. For Sinkhorn Transformers and the corresponding Local Attention baseline, we tune the block size B ∈ {16, 32, 64}. We compare against the vanilla Transformer baseline, Local Attention Transformers, and Sparse Transformers (Child et al., 2019). We implement Sparse Transformers in Tensor2Tensor by referencing the original open source code using the ﬁxed attention scheme (Child et al., 2019). However, instead of integrating the specialized cuda kernels, we manually simulated masking to achieve an equivalent implementation. We use a block length of NB = 64 and ﬁxed stride of c = 8. For character-level language modeling, owing to the overall larger sequence length, we use a maximum sequence length of 1024 and use a ﬁxed block length of 128.
+Results on Subword level Language Modeling Table 2 reports results on subword level language modeling. On both parameter settings, Sinkhorn Transformers outperform all local attention models and Sparse Transformer. Pertaining to relative performance between Sinkhorn and local attention, the performance gain at each B setting ranges from 2 − 3 perplexity points. Notably, on the base setting, Sinkhorn Transformer outperforms the vanilla Transformer at B = 32 and B = 64. At B = 16, Sinkhorn Transform-
+3tensor2tensor/models/research/lm_ experiments.py
+
+Model Transformer (Vaswani et al., 2017)
+Local Attention (16) Local Attention (32) Local Attention (64) Sparse Transformer (64) Sinkhorn Transformer (16) Sinkhorn Transformer (32) Sinkhorn Transformer (64)
+Sinkhorn Mixture
+
+Perplexity Base Big 41.57 27.59 44.62 30.14 44.23 29.32 44.23 28.97 41.89 28.77 42.64 29.42 41.29 28.48 40.79 28.39 40.11 27.34
+
+Table 2. Experimental results on Language Model One Billion (LM1B) benchmark using the Base (50M parameter) and Big (430M) setting.
+
+ers remain competitive to base Transformers. On the big setting, Sinkhorn Transformers fail to outperform vanilla Transformers, but still perform reasonably well despite being more memory efﬁcient. Finally, the Sinkhorn Mixture model outperforms all models.
+Results on Character-level Language Modeling Table 4 reports our experimental results (bytes per char) on character level language modeling. On both settings (base/big), our proposed Sinkhorn Transformer outperforms both local attention and Sparse Transformer, which afﬁrms its effectiveness as an efﬁcient attention method. On the contrary, local attention performs substantially worse compared to its counterparts, likely due to not having much global context. From this set of experiments, the vanilla full attention Transformer outperforms all efﬁcient attention methods. However, our Sinkhorn Mixture model outperforms the Transformer baseline, achieving the best performance for both parameterizations.
+Comparison with the State-of-the-art Table 3 reports our best scores relative to the state-of-the-art4. Notably, our best performing Sinkhorn Transformer remains competitive with the High Budget MoE (Shazeer et al., 2017) and Evolved Transformer (So et al., 2019) models. This demonstrates the overall competitiveness of Sinkhorn Transformers. Unfortunately, we were unable to outperform Mesh Tensorﬂow (Shazeer et al., 2018) on our setup, which consists of 5 billion parameters. Nevertheless, we consider our results to be reasonable given the improved memory complexity.
+4To the best of our knowledge, (Shazeer et al., 2018) is the best performing model on per-word perplexity. (Baevski & Auli, 2018) and (Dai et al., 2019) report per-token perplexity
+
+Sparse Sinkhorn Attention
+
+Model Low Budget MoE Transformer (Big) Evolved Transformer (Big) High Budget MoE Mesh Tensorﬂow Sinkhorn Transformer Sinkhorn Transformer
+
+# Params 5.0B 141M 151M 5.0B 4.9B 450M 1.9B
+
+Perplexity 34.10 30.44 28.60 28.00 24.00 28.39 27.34
+
+attention model performs the worst, which can be intuitively attributed to lack of global knowledge. While keeping the local window identical, our model also outperforms Sparse Transformer which demonstrates its utility as an efﬁcient attention method. Finally, the Sinkhorn Mixture performs worse than the ordinary Sinkhorn Transformer, suggesting that a restricted (and learned) global view may serve as a useful inductive bias.
+
+Table 3. Comparison with other published works on LM1B that uses per-word Perplexity. Sinkhorn Transformer remains competitive to other Transformer models and High Budget MoE models.
+
+Model Local Attention
+Transformer Sparse Transformer Sinkhorn Transformer Sinkhorn Mixture
+
+Bytes per char (Bpc)
+
+Base
+
+Big
+
+2.559 1.825
+
+1.283 1.121
+
+1.300 1.134
+
+1.295 1.132
+
+1.270 1.119
+
+Table 4. Experimental results on character level language modeling on LM1B with sequence lengths of 1024 characters.
+
+5.3. Pixel-wise Image Generation
+This section introduces and reports results on pixel-wise image generation task. This task models unconditional generative modeling of images by modeling images as ﬂat sequences of pixels.
+
+Experimental Setup We evaluate our model on pixel-bypixel image generation using the Tensor2Tensor framework. We use the CIFAR-10 dataset. Similar to language modeling, we evaluate using bytes per dimension (Bpd), a common metric for evaluating generative modeling of images. In this task, images are ﬂatted to sequences of 3076 bits which probes for long-term sequence modeling capabilities. We train all models using the base parameterization for 500K steps with a batch size of 1.
+
+Model Local Attention Transformer (Vaswani et al., 2017) Sparse Transformer (256) Sinkhorn Transformer (256) Sinkhorn Mixture
+
+Bpd 4.200 3.198 3.227 3.197 3.199
+
+Table 5. Experimental results on pixel-wise image generation (CIFAR-10)
+
+Results on Image Generation Table 5 reports our results on the pixel-wise image generation task. Our proposed Sinkhorn Transformer outperforms all baselines. The local
+
+5.4. Text Classiﬁcation
+We evaluate several text classiﬁcation benchmarks from the Tensor2Tensor framework. These tasks are mainly encoding only tasks, which allows us to benchmark the SORTCUT encoding scheme.
+Experimental Setup We experiment on both sentiment analysis and natural language inference. For the former, we use the standard open source IMDb sentiment (Maas et al., 2011) and Sentiment Treebank (SST) dataset (Socher et al., 2013). For the latter, we use two natural language inference (NLI) datasets, i.e., Stanford NLI (Bowman et al., 2015) and MultiNLI (Williams et al., 2017).
+For sentiment analysis, we evaluate on both character and word level. We set the maximum length of tokens to be 512/2048 for word/character level tasks respectively. We implement our models using Tensor2Tensor using the TINY Transformer setting (2 layers). Hyperparameters between our Sinkhorn Transformer and the vanilla Transformer remains identical. Token embeddings are initialized randomly. We train our models for 15000 steps for IMDb and SST and 500000 steps for NLI tasks. For all experiments, we use a batch size of 4096 tokens per batch. Models are trained with a single V100 GPU.
+For natural language inference, experimental setup follows the Tensor2Tensor setup where premise and hypothesis are concatenated into one long input sequence. Word embeddings are also randomly initialized. We use the Transformer tiny hyperparameter for this task. We would like to emphasize that our experimental setup for these tasks differs from the standard usage of these datasets.
+Results on Sentiment Analysis Table 6 reports results on sentiment analysis. Sinkhorn Transformers demonstrate promising results on sentiment analysis datasets on both word and character level. Even with signiﬁcant memory savings, Sinkhorn Transformers are able to outperform or remain competitive with the baseline Transformer model. We also take this chance to benchmark the SORTCUT encoder, which further reduces memory complexity. On all settings, we ﬁnd that the SORTCUT variation can achieve similar performance to not only the standard Sinkhorn Transformer but also the vanilla Transformer.
+
+Sparse Sinkhorn Attention
+
+Model (Vaswani et al., 2017)
+Sinkhorn (8) Sinkhorn (16) Sinkhorn (32) SORTCUT (2x8) SORTCUT (2x16) SORTCUT (2x32)
+
+IMDb Word Char 85.12 62.77 82.51 63.78 82.00 62.05 83.54 62.87 84.32 64.53 80.12 64.87 84.43 62.80
+
+SST Word Char 76.83 57.45 74.08 62.27 76.15 56.08 77.52 58.14 73.85 56.65 74.31 58.14 75.81 56.42
+
+weights of K and V (this is because they share the same permutation matrix). From Table 8, the best model for learning the sorting matrix is a linear layer, which signiﬁes that the sorting network can be a simple model. We also observed that, more often than not, sharing the key-values seem to hurt performance. Finally in (6), we set Nk = 0 which is equivalent to not performing Sinkhorn normalization on R. We observe that performance degrades substantially and performs the worse of all ablative variations.
+
+Table 6. Experimental results on word and character level document classiﬁcation on IMDb dataset and SST datasets.
+
+Model Transformers (Vaswani et al., 2017)
+Sinkhorn (8) Sinkhorn (16) Sinkhorn (32) Sortcut Sinkhorn (2x8) Sortcut Sinkhorn (2x16) Sortcut Sinkhorn (2x32)
+
+SNLI 78.87 68.34 77.77 78.62 75.84 80.30 79.39
+
+MNLI 53.69 52.15 52.09 54.25 48.88 49.78 55.80
+
+Table 7. Experimental results on natural language inference.
+
+Results on Natural Language Inference Table 7 reports results on SNLI and MNLI tasks. We ﬁnd that both Sinkhorn and Sortcut Sinkhorn are able to outperform the vanilla Transformer. This task demonstrates the effectiveness of the SortCut variant despite the improvement of memory complexity over the standard Sinkhorn Transformer.
+
+6.2. Hard or Soft Sorting?
+Figure 3 reports the effect of varying Sinkhorn balancing temperatures. Keeping all other variables constant, we varied the temperature of the Gumbel Sinkhorn balancing mechanism. Overall, we ﬁnd that maintaining a high temperature (inclined towards soft sorting) works better than a more discrete (hard) form of sorting. On this task, the optimal temperature is at τ = 0.75.
+6.3. Effect of Sorting Iterations
+Figure 4 reports the performance trend with respect to Nk, the number of sorting iterations. Overall, a small number of sorting iterations is sufﬁcient for good performance. No sorting at all performs extremely bad while the optimal number of sorting iterations seems to be 5 − 10. Conversely, increasing the number of sorting iterations (beyond 20) seem to hurt perplexity scores.
+
+6. Analysis
+In this section, we study the effect of certain modeling choices.
+
+Modeling Choice
+(1) P (X) = σ(F2(σ(F1(X)))) (2) P (X) = F2(σ(F1(X))) (3) P (X) = σ(F1(X)) (4) P (X) = F1(X) (5) K = V (6) Nk=0 (no sinkhorn)
+
+Perplexity 41.70 41.38 41.34 41.29 42.26 52.40
+
+Table 8. Effect of different Sorting Network variants on b = 32 on LM1B (lower is better). F (.) refers to linear transformation layers.
+
+6.1. Effect of Modeling Choices
+We are mainly interested in the effects of varying the Sorting Network model. Table 8 reports ablation studies on various model conﬁgurations. In (1) to (4), we vary the sorting network model. In (5), we experiment with a scheme to tie the
+
+Figure 3. Effect of τ on perplex- Figure 4. Effect of sorting iter-
+
+ity scores (LM1B).
+
+ations k on perplexity scores
+
+(LM1B).
+
+7. Conclusion
+We proposed Sparse Sinkhorn Attention, a new efﬁcient and sparse method for attention computation. Our work demonstrates the utility of neural sorting of internal representations within the attention module on a multitude of large-scale generative modeling and classiﬁcation tasks. On these benchamrks, our proposed Sinkhorn Transformer outperforms or remains competitive to vanilla Transformer and sparse Transformer models on a multitude of applications while being memory efﬁcient.
+
+Sparse Sinkhorn Attention
+
+References
+Adams, R. P. and Zemel, R. S. Ranking via sinkhorn propagation. arXiv preprint arXiv:1106.1925, 2011.
+Baevski, A. and Auli, M. Adaptive input representations for neural language modeling. arXiv preprint arXiv:1809.10853, 2018.
+Bowman, S. R., Angeli, G., Potts, C., and Manning, C. D. A large annotated corpus for learning natural language inference. arXiv preprint arXiv:1508.05326, 2015.
+Chelba, C., Mikolov, T., Schuster, M., Ge, Q., Brants, T., Koehn, P., and Robinson, T. One billion word benchmark for measuring progress in statistical language modeling. 2013.
+Child, R., Gray, S., Radford, A., and Sutskever, I. Generating long sequences with sparse transformers. arXiv preprint arXiv:1904.10509, 2019.
+Dai, Z., Yang, Z., Yang, Y., Carbonell, J., Le, Q. V., and Salakhutdinov, R. Transformer-xl: Attentive language models beyond a ﬁxed-length context. arXiv preprint arXiv:1901.02860, 2019.
+Guo, Q., Qiu, X., Liu, P., Shao, Y., Xue, X., and Zhang, Z. Star-transformer. arXiv preprint arXiv:1902.09113, 2019.
+Jang, E., Gu, S., and Poole, B. Categorical reparameterization with gumbel-softmax. arXiv preprint arXiv:1611.01144, 2016.
+Kitaev, N., Kaiser, L., and Levskaya, A. Reformer: The efﬁcient transformer. In International Conference on Learning Representations, 2020. URL https:// openreview.net/forum?id=rkgNKkHtvB.
+Luong, M.-T., Pham, H., and Manning, C. D. Effective approaches to attention-based neural machine translation. arXiv preprint arXiv:1508.04025, 2015.
+
+Parmar, N., Vaswani, A., Uszkoreit, J., Kaiser, Ł., Shazeer, N., Ku, A., and Tran, D. Image transformer. arXiv preprint arXiv:1802.05751, 2018.
+Qiu, J., Ma, H., Levy, O., tau Yih, S. W., Wang, S., and Tang, J. Blockwise self-attention for long document understanding, 2020. URL https://openreview.net/ forum?id=H1gpET4YDB.
+Rae, J. W., Potapenko, A., Jayakumar, S. M., Hillier, C., and Lillicrap, T. P. Compressive transformers for longrange sequence modelling. In International Conference on Learning Representations, 2020. URL https:// openreview.net/forum?id=SylKikSYDH.
+Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., and Dean, J. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. arXiv preprint arXiv:1701.06538, 2017.
+Shazeer, N., Cheng, Y., Parmar, N., Tran, D., Vaswani, A., Koanantakool, P., Hawkins, P., Lee, H., Hong, M., Young, C., et al. Mesh-tensorﬂow: Deep learning for supercomputers. In Advances in Neural Information Processing Systems, pp. 10414–10423, 2018.
+Shen, T., Zhou, T., Long, G., Jiang, J., Wang, S., and Zhang, C. Reinforced self-attention network: a hybrid of hard and soft attention for sequence modeling. arXiv preprint arXiv:1801.10296, 2018a.
+Shen, T., Zhou, T., Long, G., Jiang, J., and Zhang, C. Bi-directional block self-attention for fast and memory-efﬁcient sequence modeling. arXiv preprint arXiv:1804.00857, 2018b.
+Sinkhorn, R. A relationship between arbitrary positive matrices and doubly stochastic matrices. The annals of mathematical statistics, 35(2):876–879, 1964.
+So, D. R., Liang, C., and Le, Q. V. The evolved transformer. arXiv preprint arXiv:1901.11117, 2019.
+
+Maas, A. L., Daly, R. E., Pham, P. T., Huang, D., Ng, A. Y., and Potts, C. Learning word vectors for sentiment analysis. In Proceedings of the 49th annual meeting of the association for computational linguistics: Human language technologies-volume 1, pp. 142–150. Association for Computational Linguistics, 2011.
+Martins, A. and Astudillo, R. From softmax to sparsemax: A sparse model of attention and multi-label classiﬁcation. In International Conference on Machine Learning, pp. 1614–1623, 2016.
+Mena, G., Belanger, D., Linderman, S., and Snoek, J. Learning latent permutations with gumbel-sinkhorn networks. arXiv preprint arXiv:1802.08665, 2018.
+
+Socher, R., Perelygin, A., Wu, J., Chuang, J., Manning, C. D., Ng, A. Y., and Potts, C. Recursive deep models for semantic compositionality over a sentiment treebank. In Proceedings of the 2013 conference on empirical methods in natural language processing, pp. 1631–1642, 2013.
+Sutskever, I., Vinyals, O., and Le, Q. V. Sequence to sequence learning with neural networks. arXiv preprint arXiv:1409.3215, 2014.
+Tay, Y., Wang, S., Tuan, L. A., Fu, J., Phan, M. C., Yuan, X., Rao, J., Hui, S. C., and Zhang, A. Simple and effective curriculum pointer-generator networks for reading comprehension over long narratives. arXiv preprint arXiv:1905.10847, 2019.
+
+Sparse Sinkhorn Attention
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., and Polosukhin, I. Attention is all you need. In Advances in neural information processing systems, pp. 5998–6008, 2017.
+Vaswani, A., Bengio, S., Brevdo, E., Chollet, F., Gomez, A. N., Gouws, S., Jones, L., Kaiser, L., Kalchbrenner, N., Parmar, N., Sepassi, R., Shazeer, N., and Uszkoreit, J. Tensor2tensor for neural machine translation. CoRR, abs/1803.07416, 2018. URL http://arxiv.org/ abs/1803.07416.
+Williams, A., Nangia, N., and Bowman, S. R. A broadcoverage challenge corpus for sentence understanding through inference. arXiv preprint arXiv:1704.05426, 2017.
+Xu, K., Ba, J., Kiros, R., Cho, K., Courville, A., Salakhudinov, R., Zemel, R., and Bengio, Y. Show, attend and tell: Neural image caption generation with visual attention. In International conference on machine learning, pp. 2048–2057, 2015.
+

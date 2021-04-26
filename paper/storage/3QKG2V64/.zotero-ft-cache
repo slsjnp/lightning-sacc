@@ -1,0 +1,1097 @@
+DiNTS: Differentiable Neural Network Topology Search for 3D Medical Image Segmentation
+Yufan He1 Dong Yang2 Holger Roth2 Can Zhao2 Daguang Xu2 1Johns Hopkins University 2NVIDIA
+
+arXiv:2103.15954v1 [cs.CV] 29 Mar 2021
+
+Abstract
+Recently, neural architecture search (NAS) has been applied to automatically search high-performance networks for medical image segmentation. The NAS search space usually contains a network topology level (controlling connections among cells with different spatial scales) and a cell level (operations within each cell). Existing methods either require long searching time for large-scale 3D image datasets, or are limited to pre-deÔ¨Åned topologies (such as U-shaped or single-path) . In this work, we focus on three important aspects of NAS in 3D medical image segmentation: Ô¨Çexible multi-path network topology, high search efÔ¨Åciency, and budgeted GPU memory usage. A novel differentiable search framework is proposed to support fast gradient-based search within a highly Ô¨Çexible network topology search space. The discretization of the searched optimal continuous model in differentiable scheme may produce a sub-optimal Ô¨Ånal discrete model (discretization gap). Therefore, we propose a topology loss to alleviate this problem. In addition, the GPU memory usage for the searched 3D model is limited with budget constraints during search. Our Differentiable Network Topology Search scheme (DiNTS) is evaluated on the Medical Segmentation Decathlon (MSD) challenge, which contains ten challenging segmentation tasks. Our method achieves the state-ofthe-art performance and the top ranking on the MSD challenge leaderboard.
+1. Introduction
+Automated medical image segmentation is essential for many clinical applications like Ô¨Ånding new biomarkers and monitoring disease progression. The recent developments in deep neural network architectures have achieved great performance improvements in image segmentation. Manually designed networks, like U-Net [34], have been widely used in different tasks. However, the diversity of medical image segmentation tasks could be extremely high since the image characteristics & appearances can be completely distinct for different modalities and the presentation of diseases
+
+Ì†µÌº∑Ì†µÌøè
+
+Search
+
+Ì†µÌº∑Ì†µÌøê
+
+Ì†µÌº∑Ì†µÌøë Ì†µÌº∑Ì†µÌøè+Ì†µÌº∑Ì†µÌøê+Ì†µÌº∑Ì†µÌøë=1
+
+0.1
+
+0.9
+
+0.9
+0.8 0.1
+
+0.1 Discretization
+0.8
+0.1
+
+0.1
+0.9 0.1
+
+0.1 Gap
+0.9 0.1
+
+Continuous Model
+
+Discrete Model
+
+Figure 1. Limitations of existing differentiable topology search formulation. E.g. in Auto-DeepLab [21], each edge in the topology search space is given a probability Œ≤. The probabilities of input edges to a node sum to one, which means only one input edge for each node would be selected. A single-path discrete model (red path) is extracted from the continuous searched model. This can result in a large ‚Äúdiscretization gap‚Äù between the feature Ô¨Çow of the searched continuous model and the Ô¨Ånal discrete model.
+
+can vary considerably. This makes the direct application of even a successful network like U-Net [34] to a new task less likely to be optimal.
+The neural architecture search (NAS) algorithms [49] have been proposed to automatically discover the optimal architectures within a search space. The NAS search space for segmentation usually contains two levels: network topology level and cell level. The network topology controls the connections among cells and decides the Ô¨Çow of the feature maps across different spatial scales. The cell level decides the speciÔ¨Åc operations on the feature maps. A more Ô¨Çexible search space has more potential to contain better performing architectures.
+In terms of the search methods in Ô¨Ånding the optimal architecture from the search space, evolutionary or reinforcement learning-based [49, 33] algorithms are usually time consuming. C2FNAS [45] takes 333 GPU days to search one 3D segmentation network using the evolutionary-based methods, which is too computationally expensive for common use cases. Differentiable architecture search [23] is much more efÔ¨Åcient and Auto-DeepLab [21] is the Ô¨Årst work to apply differentiable search for segmentation network topology. However, Auto-DeepLab‚Äôs differentiable formulation limits the searched network topology. As shown in Fig. 1, this formulation assumes that only one in-
+
+put edge would be kept for each node. Its Ô¨Ånal searched model only has a single path from input to output which limits its complexity. Our Ô¨Årst goal is to propose a new differentiable scheme to support more complex topologies in order to Ô¨Ånd novel architectures with better performance.
+Meanwhile, the differentiable architecture search suffers from the ‚Äúdiscretization gap‚Äù problem [4, 38]. The discretization of the searched optimal continuous model may produce a sub-optimal discrete Ô¨Ånal architecture and cause a large performance gap. As shown in Fig. 1, the gap comes from two sides: 1) the searched continuous model is not binary, thus some operations/edges with small but non-zero probabilities are discarded during the discretization step; 2) the discretization algorithm has topology constraints (e.g. single-path), thus edges causing infeasible topology are not allowed even if they have large probabilities in the continuous model. Alleviating the Ô¨Årst problem by encouraging a binarized model during search has been explored [5, 38, 27]. However, alleviating the second problem requires the search to be aware of the discretization algorithm and topology constraints. In this paper, we propose a topology loss in search stage and a topology guaranteed discretization algorithm to mitigate this problem.
+In medical image analysis, especially for some longitudinal analysis tasks, high input image resolution and large patch size are usually desired to capture miniscule longitudinal changes. Thus, large GPU memory usage is a major challenge for training with large high resolution 3D images. Most NAS algorithms with computational constraints focus on latency [1, 3, 18, 36] for real-time applications. However, real-time inference often is not a major concern compared to the problem caused by huge GPU memory usage in 3D medical image analysis. In this paper, we propose additional GPU memory constraints in the search stage to limit the GPU usage needed for retraining the searched model.
+We validate our method on the Medical Segmentation Decathlon (MSD) dataset [37] which contains 10 representative 3D medical segmentation tasks covering different anatomies and imaging modalities. We achieve stateof-the-art results while only takes 5.8 GPU days (recent C2FNAS [45] takes 333 GPU days on the same dataset). Our contributions can be summarized as:
+‚Ä¢ We propose a novel Differentiable Network Topology Search scheme DiNTS, which supports more Ô¨Çexible topologies and joint two-level search.
+‚Ä¢ We propose a topology guaranteed discretization algorithm and a discretization aware topology loss for the search stage to minimize the discretization gap.
+‚Ä¢ We develop a memory usage aware search method which is able to search 3D networks with different GPU memory requirements.
+
+‚Ä¢ We achieve the new state-of-the-art results and top ranking in the MSD challenge leaderboard while only taking 1.7% of the search time compared to the NASbased C2FNAS [45].
+2. Related Work
+2.1. Medical Image Segmentation
+Medical image segmentation faces some unique challenges like lacking manual labels and vast memory usage for processing 3D high resolution images. Compared to networks used in natural images like DeepLab [2] and PSPNet [46], 2D/3D UNet [34, 6] is better at preserving Ô¨Åne details and memory friendly when applied to 3D images. VNet [26] improves 3D UNet with residual blocks. UNet++ [47] uses dense blocks [13] to redesign skip connections. H-DenseUNet [17] combines 2D and 3D UNet to save memory. nnUNet [14] ensembles 2D, 3D, and cascaded 3D UNet and achieves state-of-the-art results on a variety of medical image segmentation benchmarks.
+2.2. Neural Architecture Search
+Neural architecture search (NAS) focuses on designing network automatically. The work in NAS can be categorized into three dimensions: search space, search method and performance estimation [8]. The search space deÔ¨Ånes what architecture can be searched, which can be further divided into network topology level and cell level. For image classiÔ¨Åcation, [23, 50, 22, 33, 31, 11] focus on searching optimal cells and apply a pre-deÔ¨Åned network topology while [9, 42] perform search on the network topology. In segmentation, Auto-DeepLab [21] uses a highly Ô¨Çexible search space while FasterSeg [3] proposes a low latency two level search space. Both perform a joint two-level search. In medical image segmentation, NAS-UNet [40], V-NAS [48] and Kim et al [15] search cells and apply it to a U-Netlike topology. C2FNAS [45] searches 3D network topology in a U-shaped space and then searches the operation for each cell. MS-NAS [44] applies PC-Darts [43] and AutoDeepLab‚Äôs formulation to 2D medical images.
+Search method and performance estimation focus on Ô¨Ånding the optimal architecture from the search space. Evolutionary and reinforcement learning has been used in [49, 33] but those methods require extremely long search time. Differentiable methods [23, 21] relax the discrete architecture into continuous representations and allow direct gradient based search. This is magnitudes faster and has been applied in various NAS works [23, 21, 43, 48, 44]. However, converting the continuous representation back to the discrete architecture causes the ‚Äúdiscretization gap‚Äù. To solve this problem, FairDARTS [5] and Tian et al [38] proposed zero-one loss and entropy loss respectively to push the continuous representation close to binary. Some works [27, 12]
+
+Scale
+1 IN
+d2x
+1/2
+d2x
+1/4
+d2x
+1/8
+1/16
+
+d2x d2x
+
+u2x u2x
+
+2x downsample 2x upsample
+
+0
+
+1
+
+2
+
+3
+
+feature nodes 3x3x3 conv 1x1x1 conv 3x3x3 conv, stride 2 direct pass
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 11 12
+
+OUT
+u2x
+
+Topology Search Space
+
+u2x
+
+d2x
+
+cell
+
+u2x
+
+cell
+
++
+
+u2x
+
+cell
+
+u2x
+
+skip
+
+3D: 3x3x3
+
+P3D: 3x3x1
+
++
+
+P3D: 3x1x3
+
+P3D: 1x3x3
+
+Cell Search Space
+
+Figure 2. Our search space contains L=12 layers. The blue edges are the stem containing pre-deÔ¨Åned operations. The cell operations are deÔ¨Åned on the edges while the nodes are feature maps. Edges in the topology search space that are selected for features to Ô¨Çow from input to output form a candidate network topology. Each edge in the search space includes a cell which contains O=5 operations to select from. A downsample/upsample edge also contains a 2√ó downsample/upsample operation.
+
+use temperature annealing to achieve the same goal. Another problem of the differentiable method is the large memory usage during search stage. PC-DARTS [43] uses partial channel connections to reduce memory, while AutoDeepLab [21] reduces the Ô¨Ålter number at search stage. It‚Äôs a common practice to retrain the searched model while increasing the Ô¨Ålter number, batch size, or patch size to gain better performance. But for 3D medical image segmentation, the change of retraining scheme (e.g. transferring to a new task which requires larger input size) can still cause out-of-memory problem. Most NAS work has been focused on searching architecture with latency constraints [1, 3, 18, 36], while only a few considered memory as a constraint. Mem-NAS [24] uses a growing and trimming framework to constrain the inference GPU memory but does not allow integration in a differentiable scheme.
+3. Method
+3.1. Network Topology Search Space
+Inspired by Auto-Deeplab [21] and [19], we propose a search space with fully connected edges between adjacent resolutions (2√ó higher, 2√ó lower or the same) from adjacent layers as shown in Fig. 2. A stack of multi-resolution images are generated by down-sampling the input image by 1/2, 1/4, 1/8 along each axis. Together with the original image, we use four 3 √ó 3 √ó 3 3D convolutions with stride 2 to generate multi-resolution features (layer 0 in Fig. 2) to the following search space. The search space has L layers and each layer consists of feature nodes (green nodes) from D=4 resolutions and E=3D-2 candidate input edges (dashed green edges). Each edge contains a cell operation, and a upsample/downsample operation (factor 2) is used before the cell if the edge is an upsample/downsample edge. A feature node is the summation of the output features from each input edge. Compared to Auto-DeepLab [21], our search space supports searching for input image scales
+
+0
+
+1
+
+2
+
+3
+
+4 5
+
+6
+
+7
+
+8
+
+9
+
+10 11 12
+
+(a) Multi-path topology: UNet [35]
+
+0
+
+1
+
+2
+
+3
+
+4 5
+
+6
+
+7
+
+8
+
+9
+
+10 11 12
+
+(b) Single-path topology: Auto-DeepLab [21]
+
+0
+
+1
+
+2
+
+3
+
+4 5
+
+0
+
+1
+
+2
+
+3
+
+4 5
+
+(c) Multi-resolution input [20] and Input selection
+Figure 3. Our search space covers a variety of topologies (singlepath, multi-path) and can select input resolutions.
+and complex multi-path topologies, as shown in Fig. 3. As for multi-path topology, MS-NAS [44] discretizes and combines multiple single-path models searched from AutoDeepLab‚Äôs framework, but the search is still unaware of the discretization thus causing the gap. [19] also supports multi-path topology, but [19] is more about feature routing in a ‚Äúfully connected‚Äù network, not a NAS method.
+3.2. Cell Level Search Space
+We deÔ¨Åne a cell search space to be a set of basic operations where the input and output feature maps have the same spatial resolution. The cell search space in DARTS [23] and Auto-Deeplab [21] contains multiple blocks and the connections among those blocks can also be searched. However, the searched cells are repeated over all the cells
+
+in the network topology level. Similar to C2FNAS [45],
+
+our algorithm searches the operation of each cell indepen-
+
+dently, with one operation selected from the following:
+
+(1) skip connection
+
+(2) 3x3x3 3D convolution
+
+(3) P3D 3x3x1: 3x3x1 followed by 1x1x3 convolution
+
+(4) P3D 3x1x3: 3x1x3 followed by 1x3x1 convolution
+
+(5) P3D 1x3x3: 1x3x3 followed by 3x1x1 convolution
+
+P3D represents pseudo 3D [32] and has been used in
+
+V-NAS [48]. A cell also includes ReLU activation and
+
+Instance Normalization [39] which are used before and
+
+after those operations respectively (except for skip con-
+
+nection). The cell operations do not include multi-scale
+
+feature aggregation operations like atrous convolution and
+
+pooling. The feature spatial changes are performed by the
+
+upsample/downsample operations in the edges searched
+
+from the topology level.
+
+3.3. Continuous Relaxation and Discretization
+
+3.3.1 Preliminaries
+
+We brieÔ¨Çy recap the relaxation in DARTS [23]. NAS tries
+
+to select one from N candidate operations O1, O2, ¬∑ ¬∑ ¬∑ , ON
+
+for each computational node. Each operation Oi is paired
+
+with a trainable parameter Œ±i where
+
+N i=1
+
+Œ±i
+
+=
+
+1,
+
+Œ±i
+
+‚â•
+
+0,
+
+and the output feature xout =
+
+N i=1
+
+Œ±iOi(xin),
+
+where
+
+xin
+
+is the input feature. Thus, the discrete operation is relaxed
+
+by the continuous representation Œ± which can be optimized
+
+using gradient descent. After optimization, Oi with larger Œ±i is more important and will be selected. However, a small Œ±j (as long as Œ±j = 0) can still make a signiÔ¨Åcant difference on xout and following layers. Therefore, directly discarding non-zero operations will lead to the discretization gap.
+
+Auto-DeepLab [21] extends this idea to edge selection in
+
+network topology level. As illustrated in Fig. 1, every edge
+
+is paired with a trainable parameter Œ≤ (0 ‚â• Œ≤ ‚â• 1), and
+
+parameters paired with edges that pointed to the same fea-
+
+ture node sum to one. This is based on an assumption that
+
+‚Äúone input edge for each node‚Äù because the input edges to
+
+a node are competing with each other. After discretization,
+
+a single path is kept while other edges, even with a large Œ≤,
+
+are discarded. This means the feature Ô¨Çow in the searched
+
+continuous model has a signiÔ¨Åcant gap with the feature Ô¨Çow
+
+in the Ô¨Ånal discrete model. The single-path topology limita-
+
+tion comes from the previous assumption for topology level
+
+relaxation while the gap comes from the unawareness of the
+
+discretization in the search stage, such that edges with large
+
+probabilities can be discarded due to topology.
+
+3.3.2 Sequential Model with Super Feature Node
+We propose a network topology relaxation framework which converts the multi-scale search space into a sequential space using ‚ÄúSuper Feature Node‚Äù. For a search space with L layers and D resolution levels, these D feature nodes
+
+Original
+
+Ì†µÌ≤ÑÌ†µÌ†µÌøèÌøè Sequential
+
+Ì†µÌ≤ÑÌ†µÌ†µÌ±≥Ìøè
+
+Ì†µÌ±´
+
+Ì†µÌ≤ÑÌ†µÌ†µÌ≤äÌøè
+
+Ì†µÌ≤ÑÌ†µÌ†µÌ≤äÌ±≥
+
+Ì†µÌ≤îÌ†µÌøé
+
+Ì†µÌ≤îÌ†µÌøè
+
+Ì†µÌ≤îÌ†µÌ±≥‚àíÌ†µÌøè
+
+Ì†µÌ≤îÌ†µÌ±≥
+
+Ì†µÌ≤îÌ†µÌøé Ì†µÌ≤îÌ†µÌøè
+
+Ì†µÌ≤îÌ†µÌ±≥‚àíÌ†µÌøè Ì†µÌ≤îÌ†µÌ±≥
+
+Ì†µÌ≤ÑÌ†µÌ†µÌøèÌ±¥
+
+Ì†µÌ≤ÑÌ†µÌ†µÌ±≥Ì±¥
+
+Ì†µÌ±≥ select one from Ì†µÌ≤ÑÌ†µÌ†µÌøèÌøè, Ì†µÌ≤ÑÌ†µÌ†µÌøèÌøê, ‚ãØ , Ì†µÌ≤ÑÌ†µÌ†µÌøèÌ±¥ with probability Ì†µÌººÌ†µÌ†µÌøèÌøè, Ì†µÌººÌ†µÌ†µÌøèÌøê, ‚ãØ , Ì†µÌººÌ†µÌ†µÌøèÌ±¥
+
+Figure 4. The feature nodes at the same layer i are combined as a super node si. A set of selected edges (e.g. red edges in a dashed yellow block) that connects si‚àí1 and si is a ‚Äúconnection‚Äù. For E edges, there are M = 2E ‚àí 1 connection patterns. Topology search becomes selecting one connection pattern to connect adjacent super nodes sequentially.
+
+in the same layer i are combined as a super feature node si and features Ô¨Çow sequentially from these L super nodes as
+shown in Fig. 4. There are E=3D-2 candidate input edges
+to each super node and the topology search is to select an
+optimal set of input edges for each super node. We deÔ¨Åne
+a connection pattern as a set of selected edges and there are M = 2E ‚àí 1 feasible candidate connection patterns. The
+j-th connection pattern cpj is an indication vector of length E, where cpj(e) = 1, if e-th edge is selected in j-th pattern.
+We deÔ¨Åne the input connection operation to si with connection pattern cpj as cij. cpj deÔ¨Ånes cij‚Äôs topology while cij also includes cell operations on the selected edges in cpj. cij, cik+1 means the input/output connection patterns for si are cpj, cpk respectively. Under this formulation, the topology search becomes selecting an input connection pattern
+for each super node and the competition is among all M
+connection patterns, not among edges. We associate a variable Œ∑ji to the connection operation cij for every si and every pattern j. Denote the input features at layer 0 as s0, we have a sequential feature Ô¨Çow equation:
+
+M
+
+si = (Œ∑ji ‚àó cij(si‚àí1)) i = 1 ¬∑ ¬∑ ¬∑ , L
+
+(1)
+
+j=1
+
+M
+Œ∑ji = 1, Œ∑j ‚â• 0 ‚àÄi, j
+j=1
+
+Œ∑ji =
+
+Ee=1(1 ‚àí pie)1‚àícpj (e)(pie)cpj (e)
+
+M j=1
+
+Ee=1(1 ‚àí pie)1‚àícpj (e)(pie)cpj (e)
+
+(2)
+
+0 ‚â§ pie ‚â§ 1 ‚àÄi, e
+
+However, M is growing exponentially with D. To reduce
+the architecture parameters, we parameterize Œ∑ji with a set of edge probability parameters pie, e=1, ¬∑ ¬∑ ¬∑ , E in Eq. 2.
+
+For a search space with L=12 layers and D=4, the network topology parameter number is reduced from M √óL = 1023 √ó 12 to E √ó L = 10 √ó 12. Under this formulation, the probability Œ∑ of connections are highly correlated. If an input edge e to si has low probability, all the candidate patterns to si with e selected will have lower probabilities.
+For cell operation relaxation, we use the method in Sec. 3.3.1. Each cell on the input edge e to si has its own cell architecture parameters Œ±1i,e, Œ±2i,e, ¬∑ ¬∑ ¬∑ , Œ±Ni,e and will be optimized. Notice the cij in Eq. 1. contains the cell operations deÔ¨Åned on the selected edges, and it contains relaxed cell architecture parameters Œ±. Thus we can perform gradient based search for topology and cell levels jointly.
+
+3.3.3 Discretization with Topology Constraints
+After training, the Ô¨Ånal discrete architecture is derived from the optimized continuous architecture representation Œ∑ (derived from pie) and Œ±. Œ∑ij represents the probability of using input connection pattern cpij for super node si. Since the network topology search space is converted into a sequential space, the easiest way for topology discretization is to select cpj with the maximum Œ∑ji . However, the topology may not be feasible. We deÔ¨Åne topology infeasibility as:
+
+‚Äúa feature node has an input edge but no output edge or has an output edge but no input edge‚Äù.
+
+The gray feature nodes in Fig. 5 indicate infeasible topology. Therefore, we cannot select cpj and cpk as si‚Äôs input/output connection patterns even if they have the largest probabilities. For every connection pattern cpj, we generate a feasible set F(j). If a super node with input pattern j and output pattern k is feasible (all feature nodes of the super node are topologically feasible), then k ‚àà F(j). Denote the array of selected input connection pattern indexes for these L super nodes as I, and the topology discretization can be performed by sampling I from its distribution p(I) using maximum likelihood (minimize negative log likelihood):
+
+p(I) =
+
+L i=1
+
+Œ∑iI
+
+(i),
+
+‚àÄi :
+
+I(i + 1) ‚àà F(I(i))
+
+(3)
+
+0, else.
+
+L
+I = argmin -log(Œ∑iI(i)), ‚àÄi : I(i + 1) ‚àà F (I(i)) (4)
+I i=1
+
+We build a directed graph G using Œ∑ and F as illustrated in Fig. 5. The nodes (yellow blocks) of G are connection operations and the input edge cost to a node cij in G is ‚àílog(Œ∑ji ). The path with minimum cost from the source to the sink
+nodes (green nodes with gray contour) corresponds to Eq. 4, and we obtained the optimal I using Dijkstra algorithm [7]. For cell operations on the selected edges from I, we simply use the operation with the largest Œ±.
+
+-log(Ì†µÌººÌ†µÌ†µÌøèÌøè)
+
+Ì†µÌ±ê11
+
+-log(Ì†µÌººÌ†µÌ†µÌøêÌøè)
+
+Ì†µÌ±ê12
+
+-log(Ì†µÌººÌ†µÌ†µÌøêÌøè)
+
+-log(Ì†µÌººÌ†µÌ†µÌ≤äÌøè) Ì†µÌ±êÌ†µ1Ì±ñ
+
+-log(Ì†µÌººÌ†µÌ†µÌ≤äÌøê)
+
+Ì†µÌ±êÌ†µ2Ì±ñ
+
+source
+
+-log(Ì†µÌººÌ†µÌ†µÌ≤äÌøê)
+
+Ì†µÌ≤ÑÌ†µÌ†µÌ≤äÌ≤ã Ì†µÌ≤îÌ†µÌ≤ä Ì†µÌ≤ÑÌ†µÌ†µÌ≤äÌ≤å+Ì†µÌøè Ì†µÌ≤îÌ†µÌ≤ä+Ì†µÌøè
+
+-log(Ì†µÌººÌ†µÌ†µÌøèÌ±¥)
+
+Ì†µÌ±êÌ†µ1Ì±Ä
+
+-log(Ì†µÌººÌ†µÌ†µÌøêÌ±¥)
+
+Ì†µÌ±êÌ†µ2Ì±Ä
+
+Ì†µÌ±≥ layers
+
+Ì†µÌ±ê1Ì†µÌ∞ø
+
+0.001
+
+Ì†µÌ±êÌ†µÌ†µÌ±ñÌ∞ø
+
+0.001
+
+sink
+
+Ì†µÌ±êÌ†µÌ†µÌ∞øÌ±Ä
+
+0.001
+
+Figure 5. Left: The gray feature nodes are topologically infeasible, thus connection pattern index k is not in j‚Äôs feasible set, k ‚àà/ F(j). Right: A directed graph G which contains L√óM +2 nodes. A node cij (yellow block) is connected with cik+1 and cm i‚àí1 if j ‚àà F (m) and k ‚àà F (j). The cost of edges directed to cij is -logŒ∑ji . The source connects to all Ô¨Årst layer nodes and all L-th layer nodes connect to the sink (edge cost is a constant value). Those L nodes on the shortest path from source to sink (red path) in G represent
+the optimal feasible connection operations (Ô¨Ånal architecture).
+
+3.4. Bridging the Discretization Gap
+
+To minimize the gap between the continuous representation and the Ô¨Ånal discretized architecture, we add entropy losses to encourage binarization of Œ± and Œ∑:
+
+‚àí1 LŒ± = L ‚àó E ‚àó N
+
+L
+
+E
+
+N
+Œ±ni,e ‚àó log(Œ±ni,e)
+
+i=1 e=1 n=1
+
+(5)
+
+‚àí1 LŒ∑ = L ‚àó M
+
+L
+
+M
+Œ∑ji ‚àó log(Œ∑ji )
+
+i=1 j=1
+
+However, even if the architecture parameters Œ± and Œ∑ are almost binarized, there may still be a large gap due to the topology constraints in the discretization algorithm. Recall the deÔ¨Ånition of topology feasibility in Sec. 3.3.3: an activated feature node (node with at least one input edge) must have an output edge while an in-activated feature node cannot have an output edge. Each super node has D feature nodes, thus there are 2D ‚àí 1 node activation pattern. We deÔ¨Åne A as the set of all node activation patterns. Each element a ‚àà A is a indication function of length D, where a(i) = 1 if the i-th node of the super-node is activated. We further deÔ¨Åne two sets Fin(a) and Fout(a) representing all feasible input and output connection pattern indexes for a super node with node activation a as shown in Fig. 6. We propose the following topology loss:
+
+piin(a) =
+
+Œ∑ji , piout(a) =
+
+Œ∑ji+1 (6)
+
+j ‚ààFin (a)
+
+j ‚ààFout (a)
+
+L‚àí1
+
+Ltp = ‚àí
+
+( piin(a)log(piout(a)) +
+
+i=1 a‚ààA
+
+(1 ‚àí piin(a))log(1 ‚àí piout(a)) ) (7)
+
+piin(a) is the probability that the activation pattern for si is a, and piout(a) is the probability that si with pattern a
+
+‚Ñ±Ì†µÌ≤äÌ†µÌ≤è(Ì†µÌ≤Ç) Node Activation Ì†µÌ≤Ç=[0,1,1] ‚Ñ±Ì†µÌ≤êÌ†µÌ≤ñÌ†µÌ≤ï(Ì†µÌ≤Ç)
+Figure 6. The connection patterns in Fin(a) activates pattern a, and all feasible output connection patterns are in Fout(a). a = [0, 1, 1] means the last two nodes of the super-node are activated.
+
+is feasible. By minimizing Ltp, the search stage is aware of the topology constraints and encourages all super nodes to be topologically feasible, thus reduce the gap caused by topology constraints in the discretization step.
+
+3.5. Memory Budget Constraints
+
+The searched model is usually retrained under differ-
+
+ent training settings like patch size, Ô¨Ålter number, or tasks.
+
+Auto-DeepLab [21] used 4√ó larger image patch and 6√ó
+
+more Ô¨Ålters in retraining compared to the search stage. But
+
+this can cause out of memory problem for 3D images in re-
+
+training, thus we consider memory budget in architecture
+
+search. A cell‚Äôs expected memory usage is estimated by
+
+M i,e =
+
+N n=1
+
+Œ±ni,eMn.
+
+Mn
+
+is
+
+the
+
+memory
+
+usage
+
+of
+
+opera-
+
+tion On (estimated by tensor size [10]) deÔ¨Åned in Sec. 3.2.
+
+The expected memory usage Me of the searched model is:
+
+LM
+
+E
+
+Me =
+
+Œ∑ji ‚àó ( M i,e ‚àó cpj (e))
+
+(8)
+
+i=1 j=1
+
+e=1
+
+Similar to [19], we consider the budget as the percentage œÉ of the maximum memory usage Ma, of which all Œ± and Œ∑ equal to one.
+
+LM
+
+EN
+
+Ma =
+
+‚àó( ( Mn) ‚àó cpj(e))
+
+(9)
+
+i=1 j=1 e=1 n=1
+
+Lm = |Me/Ma ‚àí œÉ|1
+
+(10)
+
+3.6. Optimization
+
+We adopt the same optimization strategy as in DARTS [23] and Auto-DeepLab [21]. We partition the training set into train1 and train2, and optimize the network weights w (e.g. convolution kernels) using Lseg on train1 and network architecture weights Œ± and pe using Larch on train2 alternately. The loss Lseg for w is the evenly sum of dice and cross-entropy loss [45] in segmentation, while
+
+Larch = Lseg + t/tall ‚àó (LŒ± + LŒ∑ + Œª ‚àó Ltp + Lm) (11)
+
+t and tall are the current and total iterations for architecture optimization such that the searching is focusing more on Lseg at the starting point. We empirically scale Ltp to the same range with other losses by setting Œª=0.001.
+
+4. Experiments
+We conduct experiments on the MSD dataset [37] which is a comprehensive benchmark for medical image segmentation. It contains ten segmentation tasks covering different anatomies of interest, modalities and imaging sources (institutions) and is representative for real clinical problems. Recent C2FNAS [45] reaches state-of-the-art results on MSD dataset using NAS based methods. We follow its experiment settings by searching on the MSD Pancreas dataset and deploying the searched model on all 10 MSD tasks for better comparison. All images are resampled to have a 1.0 √ó 1.0 √ó 1.0 mm3 voxel resolution.
+4.1. Implementation Details
+Our search space has L=12 layers and D=4 resolution levels as shown in Fig. 2. The stem cell at scale 1 has 16 Ô¨Ålters and we double the Ô¨Ålter number when decreasing the spatial size by half in each axis. The search is conducted on Pancreas dataset following the same 5 fold data split (4 for training and last 1 for validation) as C2FNAS [45]. We use SGD optimizer with momentum 0.9, weight decay of 4e-5 for network weights w. We train w for the Ô¨Årst one thousand (1k) warm-up and following 10k iterations without updating architecture. The architecture weights Œ±, pe are initialized with Gaussian N (1, 0.01), N (0, 0.01) respectively before softmax and sigmoid. In the following 10k iterations, we jointly optimize w with SGD and Œ±, pe with Adam optimizer [16] (learning rate 0.008, weight decay 0). The learning rate of SGD linearly increases from 0.025 to 0.2 in the Ô¨Årst 1k warm-up iterations, and decays with factor 0.5 at the following [8k, 16k] iterations. The search is conducted on 8 GPUs with batch size 8 (each GPU with one 96√ó96√ó96 patch). The patches are randomly augmented with 2D rotation by [90, 180, 270] degrees in the x-y plane and Ô¨Çip in all three axis. The total training iterations, SGD learning rate scheduler and data pre-processing and augmentation are the same with C2FNAS [45]. After searching, the discretized model is randomly initialized and retrained with doubled Ô¨Ålter number and doubled batch size to match C2FNAS [45]‚Äôs setting. We use the SGD optimizer with 1k warm-up and 40k training iterations and decay the learning rate by a factor of 0.5 at [8k, 16k, 24k, 32k] iterations after warm-up. The learning rate scheduler is the same with search stage in the warm-up and the Ô¨Årst 20k iterations. The latter 20k iterations are for better convergence and match the 40k total retraining iterations used in C2FNAS [45]. The same data augmentation as C2FNAS (also the same as the search stage) is used for the Pancreas dataset for better comparison. To test the generalizability of the searched model, we retrain the model on all of the rest nine tasks. Some tasks in the MSD dataset contain very few training data so we use additional basic 2D data augmentations of random rotation, scaling and gamma correction for all nine tasks. We use
+
+Table 1. Comparison of FLOPs, Parameters and Retraining GPU
+
+memory usage and the 5-Fold cross validation Dice-S√∏rensen
+
+score of our searched architectures on Pancreas dataset
+
+Model
+
+FLOPs (G)
+
+Params. (M)
+
+Memory (MB)
+
+DSC1
+
+DSC2
+
+Avg.
+
+3D UNet [6] (nn-UNet) 658
+
+18
+
+9176
+
+-
+
+-
+
+-
+
+Attention UNet [28]
+
+1163
+
+104
+
+13465
+
+-
+
+-
+
+-
+
+C2FNAS [45]
+
+151
+
+17
+
+5730
+
+-
+
+-
+
+-
+
+DiNTS (œÉ=0.2)
+
+146
+
+163
+
+5787 77.94 48.07 63.00
+
+DiNTS (œÉ=0.5) DiNTS (œÉ=0.8)
+
+308
+
+147 10110 80.20 52.25 66.23
+
+334
+
+152 13018 80.06 52.53 66.29
+
+0
+
+1
+
+2
+
+3
+
+4 5
+
+6
+
+7
+
+8
+
+9 10 11 12
+
+Skip
+
+3x3x3
+
+P3D 3x3x1
+
+P3D 3x1x3
+
+P3D 1x3x3
+
+(a) Searched architecture with œÉ = 0.8
+
+0
+
+1
+
+2
+
+3
+
+4 5
+
+6
+
+7
+
+8
+
+9
+
+10 11 12
+
+Skip
+
+3x3x3
+
+P3D 3x3x1
+
+P3D 3x1x3
+
+P3D 1x3x3
+
+(b) Searched architecture with œÉ = 0.5
+
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10 11 12
+
+Skip
+
+3x3x3
+
+P3D 3x3x1
+
+P3D 3x1x3
+
+P3D 1x3x3
+
+(c) Searched architecture with œÉ = 0.2
+
+Figure 7. Searched architectures (not including the stem in Fig. 2) on Pancreas dataset with varying memory constraints.
+
+patch size 96 √ó 96 √ó 96 and stride 16 √ó 16 √ó 16 for all ten tasks except Prostate and Hippocampus. Prostate data has very few slices (less than 40) in the z-axis, so we use patch size 96 √ó 96 √ó 32 and stride 16 √ó 16 √ó 4. Hippocampus data size is too small (around 36 √ó 50 √ó 35) and we use patch size 32 √ó 32 √ó 32 and stride 4 √ó 4 √ó 4. Post-processing with largest connected component is also applied.
+4.2. Pancreas Dataset Search Results
+The search takes 5.8 GPU days while C2FNAS takes 333 GPU days on the same dataset (both using 8 16GB V100 GPU). We vary the memory constraints œÉ = [0.2, 0.5, 0.8] and show the search results in Fig. 7. The searched models have highly Ô¨Çexible topology which are searched jointly with the cell level. The 5-fold cross-validation results on Pancreas are shown in Table 1. By increasing œÉ, the searched model is more ‚Äúdense in connection‚Äù and can achieve better performance while requiring more GPU memory (estimated using PyTorch [29] functions in training described in Sec. 4.1). The marginal performance drop
+
+by decreasing œÉ = 0.8 to œÉ = 0.5 shows that we can reduce memory usage without losing too much accuracy. Although techniques like mixed-precision training [25] can be used to further reduce memory usage, our memory aware search tries to solve this problem from NAS perspective. Compared to nnUNet [14] (represented by 3D UNet because it ensembles 2D/3D/cascaded-3D U-Net differently for each task) and C2FNAS in Table 1, our searched models have no advantage in FLOPs and Parameters which are important in mobile settings. We argue that for medical image analysis, light model and low latency are less a focus than better GPU memory usage and accuracy. Our DiNTS can optimize the usage of the available GPU and achieve better performance.
+4.3. Segmentation Results on MSD
+The searched model with œÉ = 0.8 from Pancreas is used for retraining and testing on all ten tasks of MSD dataset. Similar to the model ensemble used in nnUNet [14] and C2FNAS [45], we use a 5 fold cross validation for each task and ensemble the results using majority voting. The largest connected component post-processing in nnUNet [14] is also applied. The Dice-S√∏rensen (DSC) and Normalised Surface Distance (NSD) as used in the MSD challenge are reported for the test set in Table 2. nnUNet [14] uses extensive data augmentation, different hyper-parameters like patch size, batch size for each task and ensembles networks with different architectures. It focuses on hyperparameter selection based on hand-crafted rules and is the champion of multiple medical segmentation challenges including MSD. Our method and C2FNAS [45] focus on architecture search and use consistent hyper-parameters and basic augmentations for all ten tasks. We achieved better results than C2FNAS [45] in all tasks with similar hyperparameters while only takes 1.7% searching time. Comparing to nn-UNet [14], we achieve much better performance on challenging datasets like Pancrease, Brain and Colon, while worse on smaller datasets like Heart (10 test cases), Prostate (16 test cases) and Spleen (20 test cases). Task-speciÔ¨Åc hyper-parameters, test-time augmentation, extensive data augmentation and ensemble more models as used in nn-UNet [14] might be more effective on those small datasets than our uniÔ¨Åed DiNTS searched architecture. Overall, we achieved the best average results and top ranking in the MSD challenge leaderboard, showing that a non-UNet based topology can achieve superior performance in medical imaging.
+4.4. Ablation Study
+4.4.1 Search on Different Datasets
+The models in Sec. 4.2 and Sec. 4.3 are searched from the Pancreas dataset (282 CT 3D training images). To test the generalizability of DiNTS, we perform the same search as in Sec. 4.1 on Brain (484 MRI data), Liver (131 CT data)
+
+Metric CerebriuDIKU [30] NVDLMED [41] Kim et al [15] nnUNet [14] C2FNAS [45] DiNTS
+
+DSC1 69.52 67.52 67.40 68.04 67.62 69.28
+
+DSC2 43.11 45.00 45.75 46.81 48.60 48.65
+
+DSC3 66.74 68.01 68.26 68.46 69.72 69.75
+
+Brain Avg. NSD1 59.79 88.25 60.18 86.99 60.47 86.65 61.10 87.51 61.98 87.61 62.56 89.33
+
+NSD2 68.98 69.77 72.03 72.47 72.87 73.16
+
+NSD3 88.90 89.82 90.28 90.78 91.16 91.69
+
+Avg. 82.04 82.19 82.99 83.59 83.88 84.73
+
+Metric CerebriuDIKU [30] NVDLMED [41] Kim et al [15] nnUNet [14] C2FNAS [45] DiNTS
+
+Heart DSC1 NSD1 89.47 90.63 92.46 95.57 93.11 96.44 93.30 96.74 92.49 95.81 92.99 96.35
+
+DSC1 94.27 95.06 94.25 95.75 94.98 95.35
+
+DSC2 57.25 71.40 72.96 75.97 72.89 74.62
+
+Liver Avg. NSD1 75.76 96.68 83.23 98.26 83.605 96.76 85.86 98.55 83.94 98.38 84.99 98.69
+
+NSD2 72.60 87.16 88.58 90.65 89.15 91.02
+
+Avg. 84.64 92.71 92.67 94.60 93.77 94.86
+
+Metric CerebriuDIKU [30] NVDLMED [41] Kim et al [15] nnUNet [14] C2FNAS [45] DiNTS
+
+Lung DSC1 NSD1 58.71 56.10 52.15 50.23 63.10 62.51 73.97 76.02 70.44 72.22 74.75 77.02
+
+DSC1 89.68 87.97 90.11 90.23 89.37 89.91
+
+DSC2 88.31 86.71 88.72 88.69 87.96 88.41
+
+Hippocampus Avg. NSD1 89.00 97.42 87.34 96.07 89.42 97.77 89.46 97.79 88.67 97.27 89.16 97.76
+
+NSD2 97.42 96.59 97.73 97.53 97.35 97.56
+
+Avg. 97.42 96.33 97.75 97.66 97.31 97.66
+
+Metric CerebriuDIKU [30] NVDLMED [41] Kim et al [15] nnUNet [14] C2FNAS [45] DiNTS
+
+Spleen DSC1 NSD1 95.00 98.00 96.01 99.72 91.92 94.83 97.43 99.89 96.28 97.66 96.98 99.83
+
+DSC1 69.11 69.36 72.64 76.59 74.88 75.37
+
+DSC2 86.34 86.66 89.02 89.62 88.75 89.25
+
+Prostate Avg. NSD1 77.73 94.72 78.01 92.96 80.83 95.05 83.11 96.27 81.82 98.79 82.31 95.96
+
+NSD2 97.90 97.45 98.03 98.85 95.12 98.82
+
+Avg. 96.31 95.21 96.54 97.56 96.96 97.39
+
+Metric CerebriuDIKU [30] NVDLMED [41] Kim et al [15] nnUNet [14] C2FNAS [45] DiNTS
+
+Colon DSC1 NSD1 28.00 43.00 55.63 66.47 49.32 62.21 58.33 68.43 58.90 72.56 59.21 70.34
+
+DSC1 59.00 61.74 62.34 66.46 64.30 64.50
+
+DSC2 38.00 61.37 68.63 71.78 71.00 71.76
+
+Hepatic Vessels Avg. NSD1 48.50 79.00 61.56 81.61 65.485 83.22 69.12 84.43 67.65 83.78 68.13 83.98
+
+NSD2 44.00 68.82 78.43 80.72 80.66 81.03
+
+Avg. 61.50 75.22 80.825 82.58 82.22 82.51
+
+Pancreas
+
+Overall
+
+Metric
+
+DSC1 DSC2 Avg. NSD1 NSD2 Avg. DSC NSD
+
+CerebriuDIKU [30] 71.23 24.98 48.11 91.57 46.43 69.00 67.01 77.86
+
+NVDLMED [41] 77.97 44.49 61.23 94.43 63.45 78.94 72.78 83.26
+
+Kim et al [15]
+
+80.61 51.75 66.18 95.83 73.09 84.46 74.34 85.12
+
+nnUNet [14]
+
+81.64 52.78 67.21 96.14 71.47 83.81 77.89 88.09
+
+C2FNAS [45]
+
+80.76 54.41 67.59 96.16 75.58 85.87 76.97 87.83
+
+DiNTS
+
+81.02 55.35 68.19 96.26 75.90 86.08 77.93 88.68
+
+Table 2. Dice-S√∏rensen score (DSC) and Normalised Surface Dis-
+
+tance (NSD) results on the MSD test dataset (numbers from MSD
+
+challenge live leaderboard).
+
+Test Dataset
+
+Brain
+
+Liver
+
+Lung
+
+Search Dataset Brain Pancreas Liver Pancreas Lung Pancreas
+
+DSC1
+
+80.20 79.68 94.15 94.12 69.30 68.90
+
+DSC2
+
+61.09 60.67 58.74 57.86
+
+-
+
+-
+
+DSC3
+
+77.63 77.48
+
+-
+
+-
+
+-
+
+-
+
+Avg.
+
+72.97 72.61 76.44 75.99 69.30 68.90
+
+Table 3. Dice-S√∏rensen score (DSC) of 5-fold cross validation on
+
+Brain, Liver and Lung datasets of architectures searched from Pan-
+
+creas, Brain, Liver and Lung datasets with œÉ = 0.8.
+
+and Lung (64 CT data) covering big, medium and small datasets. The results are shown in Table. 3 and demonstrate the good generalizability of our DiNTS.
+4.4.2 Necessity of Topology Loss
+As illustrated in Sec. 1, the discretization algorithm discards topologically infeasible edges (even with large probabili-
+
+*
+
+
+
+ 
+
+= 0.2, Ltp = 0.2
+
+
+
+= 0.5, Ltp
+
+
+
+= 0.5 = 0.8, Ltp
+
+
+
+= 0.8
+
+
+
+
+
+
+
+
+
+
+
+          LWHUDWLRQ[
+
+Figure 8. The indication G of discretization gap during architecture search with different memory constraints œÉ. With topology loss (dashed line), G is decreased compared to no topology loss (solid line), showing the importance of topology loss.
+
+ties), which causes a gap between feature Ô¨Çow in the op-
+
+timized continuous model (Eq. 1) and the discrete model.
+
+Our topology loss encourages connections with large prob-
+
+abilities to be feasible, thus will not be discarded and caus-
+
+ing the gap. We denote Cmax as the topology decoded by selecting connection j with largest Œ∑ji for each layer i (can be infeasible). Ctop is the topology decoded by our dis-
+
+cretization algorithm. Cmax, Ctop are the indication matri-
+
+ces of size [L, E] representing whether an edge is selected,
+
+and G =
+
+L i=1
+
+E e=1
+
+|Cmax
+
+(i,
+
+e)
+
+‚àí
+
+Ctop(i, e)|.
+
+Larger
+
+G
+
+represents larger gap between the feature Ô¨Çow before and
+
+after discretization. Fig. 8 shows the change of G during
+
+search with/without topology loss under different memory
+
+constraints. With topology loss, the gap between Cmax and
+
+Ctop is reduced, and it‚Äôs more crucial for smaller œÉ where
+
+the searched architecture is more sparse and more likely to
+
+have topology infeasibility.
+
+5. Conclusions
+In this paper, we present a novel differentiable network topology search framework (DiNTS) for 3D medical image segmentation. By converting the feature nodes with varying spatial resolution into super nodes, we are able to focus on connection patterns rather than individual edges, which enables more Ô¨Çexible network topologies and a discretization aware search framework. Medical image segmentation challenges have been dominated by U-Net based architectures [14], even NAS-based C2FNAS is searched within a U-shaped space. DiNTS‚Äôs topology search space is highly Ô¨Çexible and achieves the best performance on the benchmark MSD challenge using non-UNet architectures, while only taking 1.7% search time compared to C2FNAS. Since directly converting Auto-DeepLab [21] to the 3D version will have memory issues, we cannot fairly compare with it. For future work, we will test our proposed algorithm on 2D natural image segmentation benchmarks and explore more complex cells.
+
+References
+[1] Han Cai, Ligeng Zhu, and Song Han. Proxylessnas: Direct neural architecture search on target task and hardware. ICLR, 2019.
+[2] Liang-Chieh Chen, Yukun Zhu, George Papandreou, Florian Schroff, and Hartwig Adam. Encoder-decoder with atrous separable convolution for semantic image segmentation. In ECCV, pages 801‚Äì818, 2018.
+[3] Wuyang Chen, Xinyu Gong, Xianming Liu, Qian Zhang, Yuan Li, and Zhangyang Wang. Fasterseg: Searching for faster real-time semantic segmentation. ICLR, 2020.
+[4] Xin Chen, Lingxi Xie, Jun Wu, and Qi Tian. Progressive differentiable architecture search: Bridging the depth gap between search and evaluation. In Proceedings of the IEEE International Conference on Computer Vision, pages 1294‚Äì 1303, 2019.
+[5] Xiangxiang Chu, Tianbao Zhou, Bo Zhang, and Jixiang Li. Fair darts: Eliminating unfair advantages in differentiable architecture search. arXiv preprint arXiv:1911.12126, 2019.
+[6] O¬® zgu¬®n C¬∏ ic¬∏ek, Ahmed Abdulkadir, Soeren S Lienkamp, Thomas Brox, and Olaf Ronneberger. 3d u-net: learning dense volumetric segmentation from sparse annotation. In MICCAI, pages 424‚Äì432. Springer, 2016.
+[7] Edsger W Dijkstra. A note on two problems in connexion with graphs. Numerische mathematik, 1(1):269‚Äì271, 1959.
+[8] Thomas Elsken, Jan Hendrik Metzen, and Frank Hutter. Neural architecture search: A survey. JMLR, 2019.
+[9] Jiemin Fang, Yuzhu Sun, Qian Zhang, Yuan Li, Wenyu Liu, and Xinggang Wang. Densely connected search space for more Ô¨Çexible neural architecture search. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 10628‚Äì10637, 2020.
+[10] Yanjie Gao, Yu Liu, Hongyu Zhang, Zhengxian Li, Yonghao Zhu, Haoxiang Lin, and Mao Yang. Estimating gpu memory consumption of deep learning models. Technical report, Microsoft, May 2020.
+[11] Yu-Chao Gu, Yun Liu, Yi Yang, Yu-Huan Wu, Shao-Ping Lu, and Ming-Ming Cheng. Dots: Decoupling operation and topology in differentiable architecture search. arXiv preprint arXiv:2010.00969, 2020.
+[12] Shoukang Hu, Sirui Xie, Hehui Zheng, Chunxiao Liu, Jianping Shi, Xunying Liu, and Dahua Lin. Dsnas: Direct neural architecture search without parameter retraining. In CVPR, pages 12084‚Äì12092, 2020.
+[13] Gao Huang, Zhuang Liu, Laurens Van Der Maaten, and Kilian Q Weinberger. Densely connected convolutional networks. In CVPR, pages 4700‚Äì4708, 2017.
+[14] Fabian Isensee, Paul F Ja¬®ger, Simon AA Kohl, Jens Petersen, and Klaus H Maier-Hein. Automated design of deep learning methods for biomedical image segmentation. arXiv preprint arXiv:1904.08128, 2019.
+[15] Sungwoong Kim, Ildoo Kim, Sungbin Lim, Woonhyuk Baek, Chiheon Kim, Hyungjoo Cho, Boogeon Yoon, and Taesup Kim. Scalable neural architecture search for 3d
+
+medical image segmentation. In MICCAI, pages 220‚Äì228. Springer, 2019.
+[16] Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. ICLR, 2015.
+[17] Xiaomeng Li, Hao Chen, Xiaojuan Qi, Qi Dou, Chi-Wing Fu, and Pheng-Ann Heng. H-denseunet: hybrid densely connected unet for liver and tumor segmentation from ct volumes. TMI, 37(12):2663‚Äì2674, 2018.
+[18] Xin Li, Yiming Zhou, Zheng Pan, and Jiashi Feng. Partial order pruning: for best speed/accuracy trade-off in neural architecture search. In CVPR, pages 9145‚Äì9153, 2019.
+[19] Yanwei Li, Lin Song, Yukang Chen, Zeming Li, Xiangyu Zhang, Xingang Wang, and Jian Sun. Learning dynamic routing for semantic segmentation. In CVPR, pages 8553‚Äì 8562, 2020.
+[20] Guosheng Lin, Anton Milan, Chunhua Shen, and Ian Reid. ReÔ¨Ånenet: Multi-path reÔ¨Ånement networks for highresolution semantic segmentation. In CVPR, July 2017.
+[21] Chenxi Liu, Liang-Chieh Chen, Florian Schroff, Hartwig Adam, Wei Hua, Alan L Yuille, and Li Fei-Fei. Autodeeplab: Hierarchical neural architecture search for semantic image segmentation. In CVPR, pages 82‚Äì92, 2019.
+[22] Chenxi Liu, Barret Zoph, Maxim Neumann, Jonathon Shlens, Wei Hua, Li-Jia Li, Li Fei-Fei, Alan Yuille, Jonathan Huang, and Kevin Murphy. Progressive neural architecture search. In ECCV, pages 19‚Äì34, 2018.
+[23] Hanxiao Liu, Karen Simonyan, and Yiming Yang. Darts: Differentiable architecture search. ICLR, 2019.
+[24] Peiye Liu, Bo Wu, Huadong Ma, and Mingoo Seok. Memnas: Memory-efÔ¨Åcient neural architecture search with growtrim learning. In CVPR, pages 2108‚Äì2116, 2020.
+[25] Paulius Micikevicius, Sharan Narang, Jonah Alben, Gregory Diamos, Erich Elsen, David Garcia, Boris Ginsburg, Michael Houston, Oleksii Kuchaiev, Ganesh Venkatesh, et al. Mixed precision training. ICLR, 2018.
+[26] Fausto Milletari, Nassir Navab, and Seyed-Ahmad Ahmadi. V-net: Fully convolutional neural networks for volumetric medical image segmentation. In 3DV, pages 565‚Äì571. IEEE, 2016.
+[27] Niv Nayman, Asaf Noy, Tal Ridnik, Itamar Friedman, Rong Jin, and Lihi Zelnik. Xnas: Neural architecture search with expert advice. In NeurIPS, pages 1977‚Äì1987, 2019.
+[28] Ozan Oktay, Jo Schlemper, Loic Le Folgoc, Matthew Lee, Mattias Heinrich, Kazunari Misawa, Kensaku Mori, Steven McDonagh, Nils Y Hammerla, Bernhard Kainz, et al. Attention u-net: Learning where to look for the pancreas. MIDL, 2018.
+[29] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al. Pytorch: An imperative style, high-performance deep learning library. In NeurIPS, pages 8026‚Äì8037, 2019.
+[30] Mathias Perslev, Erik Bj√∏rnager Dam, Akshay Pai, and Christian Igel. One network to segment them all: A general, lightweight system for accurate 3d medical image segmentation. In MICCAI, pages 30‚Äì38. Springer, 2019.
+
+[31] Hieu Pham, Melody Y Guan, Barret Zoph, Quoc V Le, and Jeff Dean. EfÔ¨Åcient neural architecture search via parameter sharing. ICML, 2018.
+[32] Zhaofan Qiu, Ting Yao, and Tao Mei. Learning spatiotemporal representation with pseudo-3d residual networks. In ICCV, pages 5533‚Äì5541, 2017.
+[33] Esteban Real, Alok Aggarwal, Yanping Huang, and Quoc V Le. Regularized evolution for image classiÔ¨Åer architecture search. In Proceedings of the aaai conference on artiÔ¨Åcial intelligence, volume 33, pages 4780‚Äì4789, 2019.
+[34] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image segmentation. In MICCAI, pages 234‚Äì241. Springer, 2015.
+[35] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image segmentation. In MICCAI, pages 234‚Äì241. Springer, 2015.
+[36] Albert Shaw, Daniel Hunter, Forrest Landola, and Sammy Sidhu. Squeezenas: Fast neural architecture search for faster semantic segmentation. In ICCV Workshops, Oct 2019.
+[37] Amber L Simpson, Michela Antonelli, Spyridon Bakas, Michel Bilello, Keyvan Farahani, Bram Van Ginneken, Annette Kopp-Schneider, Bennett A Landman, Geert Litjens, Bjoern Menze, et al. A large annotated medical image dataset for the development and evaluation of segmentation algorithms. arXiv preprint arXiv:1902.09063, 2019.
+[38] Yunjie Tian, Chang Liu, Lingxi Xie, Jianbin Jiao, and Qixiang Ye. Discretization-aware architecture search. arXiv preprint arXiv:2007.03154, 2020.
+[39] Dmitry Ulyanov, Andrea Vedaldi, and Victor Lempitsky. Instance normalization: The missing ingredient for fast stylization. arXiv:1607.08022, 2016.
+[40] Yu Weng, Tianbao Zhou, Yujie Li, and Xiaoyu Qiu. Nasunet: Neural architecture search for medical image segmentation. IEEE Access, 7:44247‚Äì44257, 2019.
+[41] Yingda Xia, Fengze Liu, Dong Yang, Jinzheng Cai, Lequan Yu, Zhuotun Zhu, Daguang Xu, Alan Yuille, and Holger Roth. 3d semi-supervised learning with uncertainty-aware multi-view co-training. In WACV, pages 3646‚Äì3655, 2020.
+[42] Saining Xie, Alexander Kirillov, Ross Girshick, and Kaiming He. Exploring randomly wired neural networks for image recognition. In ICCV, pages 1284‚Äì1293, 2019.
+[43] Yuhui Xu, Lingxi Xie, Xiaopeng Zhang, Xin Chen, Guo-Jun Qi, Qi Tian, and Hongkai Xiong. Pc-darts: Partial channel connections for memory-efÔ¨Åcient differentiable architecture search. ICLR, 2020.
+[44] Xingang Yan, Weiwen Jiang, Yiyu Shi, and Cheng Zhuo. Ms-nas: Multi-scale neural architecture search for medical image segmentation. In International Conference on Medical Image Computing and Computer-Assisted Intervention, pages 388‚Äì397. Springer, 2020.
+[45] Qihang Yu, Dong Yang, Holger Roth, Yutong Bai, Yixiao Zhang, Alan L Yuille, and Daguang Xu. C2FNAS: Coarseto-Fine Neural Architecture Search for 3D Medical Image Segmentation. In CVPR, pages 4126‚Äì4135, 2020.
+[46] Hengshuang Zhao, Jianping Shi, Xiaojuan Qi, Xiaogang Wang, and Jiaya Jia. Pyramid scene parsing network. In CVPR, pages 2881‚Äì2890, 2017.
+
+[47] Zongwei Zhou, Md Mahfuzur Rahman Siddiquee, Nima Tajbakhsh, and Jianming Liang. Unet++: Redesigning skip connections to exploit multiscale features in image segmentation. TMI, 39(6):1856‚Äì1867, 2019.
+[48] Zhuotun Zhu, Chenxi Liu, Dong Yang, Alan Yuille, and Daguang Xu. V-nas: Neural architecture search for volumetric medical image segmentation. In 3DV, pages 240‚Äì248. IEEE, 2019.
+[49] Barret Zoph and Quoc V Le. Neural architecture search with reinforcement learning. ICLR, 2017.
+[50] Barret Zoph, Vijay Vasudevan, Jonathon Shlens, and Quoc V Le. Learning transferable architectures for scalable image recognition. In CVPR, pages 8697‚Äì8710, 2018.
+

@@ -1,0 +1,797 @@
+See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/317026520
+An Automated Framework for Multi-label Brain Tumor Segmentation based onKernel Sparse Representation
+Article in Acta Polytechnica Hungarica ¬∑ April 2017
+DOI: 10.12700/APH.14.1.2017.1.3
+
+CITATIONS
+13
+4 authors, including:
+Binh P. Nguyen Victoria University of Wellington 57 PUBLICATIONS 340 CITATIONS
+SEE PROFILE
+
+READS
+56
+Chee-Kong Chui National University of Singapore 248 PUBLICATIONS 2,695 CITATIONS
+SEE PROFILE
+
+Some of the authors of this publication are also working on these related projects: Image-guided Robot-Assisted Surgical Training View project Predictive Models using Electronic Health Records View project
+
+All content following this page was uploaded by Binh P. Nguyen on 12 March 2018.
+The user has requested enhancement of the downloaded file.
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+Xuan Chen1, Binh P. Nguyen3, Chee-Kong Chui2, Sim-Heng Ong1
+1Department of Electrical and Computer Engineering, National University of Singapore, 4 Engineering Drive 3, 117583, Singapore 2Department of Mechanical Engineering, National University of Singapore, 9 Engineering Drive 1, 117575, Singapore 3Centre for Computational Biology, Duke-NUS Medical School, 8 College Road, 169857, Singapore xuan.chen@u.nus.edu, phubinh@ieee.org, mpecck@nus.edu.sg, eleongsh@nus.edu.sg
+Abstract: A novel automated framework is proposed in this paper to address the signiÔ¨Åcant but challenging task of multi-label brain tumor segmentation. Kernel sparse representation, which produces discriminative sparse codes to represent features in a high-dimensional feature space, is the key component of the proposed framework. The graph-cut method is integrated into the framework to make a segmentation decision based on both the kernel sparse representation and the topological information of brain structures. A splitting technique based on principal component analysis (PCA) is adopted as an initialization component for the dictionary learning procedure, which signiÔ¨Åcantly reduces the processing time without sacriÔ¨Åcing performance. The proposed framework is evaluated on the multi-label Brain Tumor Segmentation (BRATS) Benchmark. The evaluation results demonstrate that the proposed framework is able to achieve compatible performance and better generalization ability compared to the state-of-the-art approaches.
+Keywords: Brain tumor segmentation, kernel methods, superpixels, PCA, sparse coding, dictionary learning, graph-cuts
+
+‚Äì 25 ‚Äì
+
+X. Chen et al.
+1 Introduction
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+
+Brain tumor refers to uncontrollable cell proliferation in the brain. Even though brain tumor is not a common disease, with prevalence of less than 0.1% in the western population, it results in high mortality [1]. The topic of brain tumor segmentation has long attracted researchers‚Äô attention because of its value in medical diagnosis and treatment planning. Brain tumor segmentation intends to separate tumors from non-tumor regions and classify brain tumor tissues according to predeÔ¨Åned criteria [2]. Manual segmentation done by experts is possible but impractical, since it is tedious and time-consuming. Hence, semi-automated and automated approaches, which require less or even no human intervention, are practical alternatives.
+Magnetic resonance (MR) imaging is preferable in brain imaging due its advantages of safety, better tissue contrast and fewer artifacts than computed tomography (CT). This emphasizes the signiÔ¨Åcance of efÔ¨Åcient and effective frameworks for brain tumor segmentation based on MR images. However, brain tumors exhibit a wide range in shape, size as well as location, and share intensities with normal brain regions in MR images. Besides, the structure of the tumor is usually complex. Therefore, much effort has been expended in the development of semi-automated or automated frameworks for brain tumor segmentation, especially multi-label brain tumor segmentation.
+The past few decades have witnessed signiÔ¨Åcant advances in the Ô¨Åeld of brain tumor segmentation. The approaches to brain tumor segmentation can be roughly classiÔ¨Åed into two categories: generative methods and discriminative methods. In generative methods, the anatomy and statistics of different brain tissues are explicitly modeled, while the features of task-relevant brain tissues are directly learned from training sets in discriminative methods [3]. Generative methods, although they have to deal with difÔ¨Åculties in modeling the prior knowledge of brain tissues and elaborate non-rigid registration, usually have better generalization ability on unseen images. Discriminative methods, which avoid the difÔ¨Åculties in modeling and registration, are sensitive to the amount and quality of training data.
+The expectation-maximization (EM) algorithm usually plays an important role in the generative methods. Based on the statistics of the healthy brain, an outlier detection framework is proposed by Prastawa et al. [4] which treats brain tumor as outlier and generates model of tumors for subsequent EM segmentation. Menze et al. [5] incorporate multi-channel priors to augment the traditional atlas-based EM segmentation. Khotanlou et al. [6] introduce a two-step segmentation procedure, which includes tumor detection and initial segmentation reÔ¨Ånement by fuzzy classiÔ¨Åcation. Gooya et al. [7] describe a glioma growth model that is integrated with the inference of patient speciÔ¨Åc atlas to guides the EM-based segmentation.
+Much research has been done in advancing discriminative methods. The classic level-set method [8, 9] is utilized due to its strength in following the change of object topology. The success of the random forest algorithm, which is essentially an ensemble classiÔ¨Åer, in the multi-label Brain Tumor Segmentation (BRATS) challenge 2012 has boosted its popularity in the following years [10, 11].
+
+‚Äì 26 ‚Äì
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+The fact that sparse or compressible representations for signals and images are employed in some predeÔ¨Åned or learned representation systems, also known as dictionaries, is the core of the well-known sparse coding algorithm. Compared to predeÔ¨Åned dictionaries, learned dictionaries usually provide better sparse representations and hence more satisfying results [12]. Therefore, sparse coding and dictionary learning are commonly used together. Applications based on sparse representation using sparse coding and dictionary learning can be found in various tasks, e.g., image classiÔ¨Åcation [13]. Instead of the explicit raw representation of data, kernel extension of sparse coding and dictionary learning work in an implicit, high-dimensional feature space to achieve more discriminative sparse representation. Kernel sparse representation has been utilized in the brain tumor segmentation task and its effectiveness in distinguishing tumor from normal brain regions has been demonstrated [14, 15]. However, multi-label brain tumor segmentation, which is more challenging compared to binary brain tumor segmentation, is not considered in their frameworks.
+In this paper, we propose a fully automated framework based on kernel sparse representation for multi-label brain tumor segmentation. In the proposed framework, superpixels are used as basic processing units instead of traditional pixels [14] or patches [15]. A pixel-based framework involves much repeated effort in encoding similar pixels. In contrast, patches usually exhibit obvious inhomogeneity, though patch-based frameworks may be more efÔ¨Åcient than their pixel-based counterparts. In the proposed framework, the sparse representation of each superpixel is generated in a high-dimensional feature space, where the nonlinear similarity among superpixels is more discriminative. Kernel dictionary learning is applied to learn classspeciÔ¨Åc dictionaries based on superpixel-level features including histogram and spatial location, while kernel sparse coding uses the learned dictionaries and features to generate a sparse representation for a given superpixel. The graph-cut method, which naturally take topological information into consideration, is employed in the framework. Kernel sparse representation, together with the topological information of brain tumor structure, is utilized by the graph-cut method to make the segmentation decision. The proposed framework is an enhanced version of the one introduced in our previous work [16] by including a PCA-based splitting component, named PCA-Split, to signiÔ¨Åcantly speed up the processing procedure without affecting the accuracy. Furthermore, the new framework has slightly improved results. The idea of PCA-Split is driven by the fact that manipulation of a large matrix is of high computational cost. PCA-Split replaces the original training features with more compact and representative representations. Therefore, dominant features can be efÔ¨Åciently preserved, though the size of the training matrix is signiÔ¨Åcantly decreased and hence processing time is reduced. The proposed framework is evaluated on 20 high-grade glioma (HGG) cases provided by the multi-modal Brain Tumor Segmentation Challenges 2013 (BRATS2013). Results shows the enhanced framework achieves comparable performance compared to the state-of-the-art approaches. In addition, it generalizes better on unseen images even though less training data is required.
+The remainder of this paper is organized as follows. Section 2 provides an overview of the proposed framework for automated multi-label brain tumor segmentation. PCA-Split, kernel sparse representation and the graph-cut method, which are the
+‚Äì 27 ‚Äì
+
+X. Chen et al.
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+
+three main components of the proposed framework, are discussed in Section 3-5. Evaluation results and comparison with the state-of-the-art approaches are reported in Section 6. The paper is concluded in Section 7.
+
+2 Overview
+
+Training Set
+
+FLAIR T2 T1 T1c
+
+‚Ä¶
+
+Slice 1
+
+Slide N
+
+Test Set
+
+Pre-processing
+FLAIR T2 T1 T1c
+
+‚Ä¶
+
+Kernel Sparse Representation
+
+Initialization PCA-Split
+
+T1c
+
+Superpixel Superpixel-level
+
+Generation
+
+Features
+
+T1c
+
+Kernel Dictionary Learning
+Training Phase Class-specific dictionaries
+Kernel Sparse Coding
+Testing Phase
+
+Slide 1
+
+Slide M
+
+Ground Truth
+
+Result
+
+Segmentation
+
+Post-processing
+
+Graph-cuts Testing Phase
+
+Figure 1 Overview of the proposed automated framework for multi-label brain tumor segmentation.
+An overview of the proposed automated framework for multi-label brain tumor segmentation is shown in Figure 1. The proposed framework contains three main components: initialization with PCA-Split, kernel sparse representation and segmentation using graph-cuts. Given a set of training samples, PCA-Split initialization Ô¨Ånds more compact and representative representations by splitting the set into a given number of subsets and replacing the raw representations with the centroids of each subsets. Kernel sparse representation consists of kernel dictionary learning and kernel sparse coding. In the training phase, kernel dictionary learning learns class-speciÔ¨Åc dictionaries based on superpixel-level features of brain tissues, which are used as representation systems for each task-relevant class. In the testing phase, kernel sparse coding generates optimal sparse codes for unseen testing samples according to the learned dictionaries and their superpixel-level features. The kernel sparse representation is then utilized in the graph-cut method to make pixel-wise segmentation decisions.
+
+3 PCA-Split Initialization
+Adequate and representative training samples are critical to the performance of learning-based approaches. However, manipulation of a large matrix is of high computational cost and the quality of the selected training samples is not guaranteed.
+
+‚Äì 28 ‚Äì
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+Algorithm 1 PCA-Split
+
+Input: A input set W = [wi]Ni=1 and a desired number of subsets Q. Task: Split a subset of the given input set with regard to its variance until the
+
+desired number of subsets is reached.
+
+Initialize: Number of subsets q = 1, subsets V = [V1, ..., Vi, ..., Vq] and V1 = W. Procedure:
+
+while q = Q do
+
+for ‚àÄ Vi ‚äÜ V do Œ¥i = ‚àë{‚àÄ j|w j‚ààVi}(w j ‚àí ¬µ i)2.
+end for
+
+Sort all subsets in descending order according to Œ¥i. Calculate covariance matrix Œ£1 = ‚àë{‚àÄ j|wj‚ààV1}(w j ‚àí ¬µ 1)(w j ‚àí ¬µ 1)T Find out eigenvector eigmax which corresponds to the largest eigenvalue. for all j ‚àà {‚àÄ j|w j ‚àà V1} do
+if (w j ‚àí ¬µ 1), eigmax < 0 then w j ‚àà Vle f t
+else if (w j ‚àí ¬µ 1), eigmax ‚â• 0 then w j ‚àà Vright
+end if
+
+end for
+
+q ‚Üê q+1
+
+Vq‚àí1 ‚Üê Vle f t
+
+Vq ‚Üê Vright
+
+for ‚àÄ Vi ‚äÜ V do
+
+¬µi
+
+=
+
+‚àë{‚àÄ j|w j ‚ààVi} w j |Vi |
+
+end for
+
+end while
+
+Output: subsets V = [V1, ..., Vi, ..., VQ] and centroids U = [¬µ 1, ..., ¬µ Q]
+
+To address this problem, a principal-component-analysis-based (PCA-based) splitting technique is applied, which is named PCA-Split. The PCA-based splitting technique has been utilized in various applications, like codebook initialization for vector quantization [17] and hierarchical clustering [18]. The purpose of PCA-Split is, in each iteration, to Ô¨Ånd an optimal splitting plane with respect to the variance of a subset of the given data [17]. Splitting continues until the desired number of subsets is achieved. The centroid of each subset is used to represent all data samples that lie in the subset. The main properties of the subset are preserved by the centroid, while ‚Äúoutliers‚Äù are eliminated. In this way, more compact and representative representations of the dataset can be obtained.
+‚Äì 29 ‚Äì
+
+X. Chen et al.
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+
+The procedure of performing PCA-Split is described as follows. Given an input set W = [wi]Ni=1, PCA-Split starts with only one subset V1 which contains the entire input set. In each iteration, all subsets are sorted in descending order according to their representation distortions calculated by the formulation Œ¥q = ‚àë‚àÄ j|wj‚ààVq (wi ‚àí ¬µ q)2 with respect to the centroid ¬µ q. The subset with the largest representation distortion is then selected to be split. The optimal splitting plane is the eigenvector corre-
+sponding to the largest eigenvalue, which splits the subset into ‚Äúleft‚Äù and ‚Äúright‚Äù
+groups. Hence the number of subsets is increased by one in each iteration until the
+preset number of subsets is reached.
+The pseudo-code for PCA-Split is given in Algorithm 1, where ¬∑, ¬∑ denotes the inner product, XT the transpose of X, |X| the number of elements in X.
+
+4 Kernel Sparse Representation
+4.1 Extraction and Fusion of Superpixel-Level Features
+Superpixels that contain pixels with similar perceptual meaning are the basic processing units in the proposed framework. The compact grouping of pixels is beneÔ¨Åcial to the achievement of better kernel sparse representation and faster segmentation. The contour relaxed superpixel (CRS) algorithm [19] is utilized for superixel generation due to its Ô¨Çexibility in controlling the adaption to a complicated contour with a single parameter Œ∫. MR imaging provides multi-modal information, like T1-weighted (T1), T2-weighted (T2), contrast-enhanced T1-weighted (T1c) and FLAIR, which help to enrich our understanding of brain tumors. Due to their higher spatial resolution and clearer display of brain tumor structure compared to other modalities, T1c images are used as the reference in the generation of superpixels. Superpixel generation is restricted to the brain area only to avoid unnecessary processing to the background area. CRS (Œ∫ = 0.01) partitions an input image into a set of superpixels S = [s1, ..., st , ...sT ]. In order to fully utilize the multi-modal information, the generated superpixel regions are applied to T1, T2 and FLAIR modalities.
+Superpixel-level features are extracted based on the generated superpixel regions (Figure 2). For a superpixel st , 64-bin histograms from all four modalities are calculated, which are denoted as ht(c) (c ‚àà {T1, T2, T1c, FLAIR}). All histograms are normalized to have ‚àërj=1 ht(c)( j) = 1, where r is the number of pixels located in superpixel st , to prevent bias induced by the difference in number of pixels. In addition to histograms, spatial locations of superpixels are taken into consideration. The spatial location of superpixel st is deÔ¨Åned as its centroid lt = (xt , yt ). The mean values of positions of all pixels in superpixel st in the x-axis normalized by the width of the image and y-axis normalized by the height of the image correspond to the values of xt and yt respectively. Therefore, the learned dictionaries are able to simultaneously model both features including histogram and spatial location.
+The proposed framework, instead of working on the raw representation of data, generates kernel sparse representation in a high-dimensional, implicit feature space F .
+
+‚Äì 30 ‚Äì
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+Histograms
+
+T1c CRS
+
+Superpixel-level features Ì†µÌ≤âÌ†µÌ±°(T1) Ì†µÌ≤âÌ†µÌ±°(T2)
+Ì†µÌ±†Ì†µÌ±° Ì†µÌ≤âÌ†µÌ±°(T1c)
+Ì†µÌ≤âÌ†µÌ±°(FLAIR)
+Ì†µÌ≤çÌ†µÌ±° Centroid=(0.475,0.371)
+
+Feature Matrices
+
+Ì†µÌ±ØT1 =
+
+Ì†µÌ≤âÌ†µ‚Ä≤Ì±° T1
+
+Ì†µÌ±á Ì†µÌ±°=1
+
+Ì†µÌ±ØT2 =
+
+Ì†µÌ∞°Ì†µ‚Ä≤Ì±° T2
+
+Ì†µÌ±á Ì†µÌ±°=1
+
+Ì†µÌ±ØT1c =
+
+Ì†µÌ≤âÌ†µ‚Ä≤Ì±° T1c
+
+Ì†µÌ±á Ì†µÌ±°=1
+
+Ì†µÌ±ØFLAIR =
+
+Ì†µÌ∞°Ì†µ‚Ä≤Ì±° FLAIR
+
+Ì†µÌ±á Ì†µÌ±°=1
+
+Ì†µÌ±≥ =
+
+Ì†µÌ≤çÌ†µ‚Ä≤Ì±°
+
+Ì†µÌ±á Ì†µÌ±°=1
+
+Spatial location
+
+Superpixels
+
+Multi-feature Fusion
+
+Ì†µÌ±≤ = Ì†µÌ±≤Ì†µÌ±Ø T1 Ì†µÌ±ØT1, Ì†µÌ±ØT1 ‚äô Ì†µÌ±≤Ì†µÌ±Ø T2 Ì†µÌ±ØT2, Ì†µÌ±ØT2 ‚äô Ì†µÌ±≤Ì†µÌ±Ø T1 Ì†µÌ±ØT1c, Ì†µÌ±ØT1c ‚äô Ì†µÌ±≤Ì†µÌ±Ø FLAIR Ì†µÌ±ØFLAIR, Ì†µÌ±ØFLAIR ‚äô Ì†µÌ±≤SL(Ì†µÌ±≥, Ì†µÌ±≥)
+
+Figure 2 Extraction and fusion of superpixel-level features.
+
+Nonlinear similarities in F between samples are considered, which are more discriminative compared to the linear similarity in the original space. In order to map the raw representation to the feature space F , a nonlinear transformation Œ¶(¬∑) is applied. Hence, nonlinear similarity between two samples x and x can be measured by the inner product Œ¶(x)T Œ¶(x ). Nevertheless, Œ¶(¬∑) can be intractable in the high-dimensional, even inÔ¨Ånite-dimensional, feature space F [14]. To address this problem, the kernel trick is adopted, which replaces the intractable inner product Œ¶(x)T Œ¶(x ) with a known kernel function K . With the knowledge of the kernel and the samples, nonlinear similarity can always be calculated even though the explicit formulation of Œ¶(¬∑) is not known. To proceed with the replacement, the chosen kernel function should satisfy Mercer‚Äôs theorem [20]. The well-known radial basis function (RBF) kernel is selected in our framework. The deÔ¨Ånition of the RBF Kernel is K (x, y) = exp(‚àí x ‚àí y 2/2œÉ 2)(œÉ = 1.5).
+Given two matrices X = [xi]Ni=1 and X = [xi]Mi=1, a Gramian matrix K(X, X ) ‚àà RN√óM is deÔ¨Åned such that its (n, m)-entry Kn,m corresponds to the nonlinear similarity K (xn, xm) between the nth element of X and the mth element of X . All extracted superpixel-level features are arranged in column vector manner into their corresponding feature matrices (Figure 2). SpeciÔ¨Åcally, in the training phase, the raw representations of all features are substituted by the centroids of subsets obtained by applying PCA-Splits to their corresponding feature matrices with a speciÔ¨Åed number of substes Q. For histogram feature matrices, Gramian matrices KH(c) (c ‚àà {T1, T2, T1c, FLAIR}) are obtained to represent the nonlinear similarities in a speciÔ¨Åc modality, while a Gramian matrix KSL is calculated for that of spatial location. KH(c) (c ‚àà {T1, T2, T1c, FLAIR}) and KSL are denoted as the following formula-
+‚Äì 31 ‚Äì
+
+X. Chen et al.
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+
+tions:
+
+KH(c)(i, j) = exp
+
+‚àí
+
+hi(c) ‚àí h j(c)
+
+2 2
+
+2œÉ 2
+
+(1)
+
+KSL(i, j) = exp
+
+‚àí
+
+li ‚àí l j 2œÉ 2
+
+2 2
+
+Not only the sparse representation beneÔ¨Åts from the kernel trick, the use of the the kernel trick also facilitate the fusion of multi-features such that all the Gramian matrices can be combined in an elegant way by simple Hadamard product. The combination yields an ensemble matrix K, i.e., K = KH(T1) KH(T2) KH(T1c) KH(FLAIR). Learning of dictionary based on the ensemble Gramian matrix is more efÔ¨Åcient and effective since all Ô¨Åve features are captured at one time. For simplicity, the rest of the paper only focuses on the ensemble Gramian matrix for the generation of kernel sparse representation, rather than the Ô¨Åve Gramian matrices individually.
+
+4.2 Kernel Sparse Coding and Kernel Dictionary Learning
+
+Given a set of input data Y = [yi]Ni=1, yi ‚àà RM, the goal of dictionary learning is to obtain an optimal overcomplete dictionary D ‚àà RM√óK to well model the given data Y, so that each element yi ‚àà Y can be approximated by a linear combination of only a few dictionary atoms dk, (k = 1, 2, ..., K) via a code xi ‚àà RK. The code xi is sparse since only a few entries are non-zero. The objective function of dictionary learning is given by:
+
+(XÀÜ , DÀÜ ) = arg min
+X,D
+
+Y ‚àí DX
+
+2 F
+
+s.t.
+
+xi 0 ‚â§ T0, ‚àÄi
+
+(2)
+
+where X = [xi]Ni=1, . F is the Frobenius norm, . 0 denotes the 0 norm and T0 the sparsity level, which indicates the maximum number of non-zero entries in a sparse code xi .
+Upon obtaining the dictionary, D is Ô¨Åxed and sparse coding Ô¨Ånds the optimal sparse representation X for the testing data Y based on the learned dictionary D. The optimization problem of sparse coding is expressed as:
+
+(XÀÜ ) = arg min Y ‚àí DX
+
+2 F
+
+s.t.
+
+xi 0 ‚â§ T0, ‚àÄi
+
+(3)
+
+X
+
+To adapt the original optimization problem of sparse coding and dictionary learning into feature space F , a nonlinear transformation Œ¶(¬∑) is applied to both the data matrix. Therefore, the kernel extensions of dictionary learning and sparse coding are formulated as equations (4) and (5) respectively:
+
+(XÀÜ , DÀÜ ) = arg min
+X,D
+
+Œ¶(Y) ‚àí Œ¶(D)X
+
+2 F
+
+s.t.
+
+xi 0 ‚â§ T0, ‚àÄi
+
+(4)
+
+(XÀÜ ) = arg min Œ¶(Y ) ‚àí Œ¶(D)X
+
+2 F
+
+s.t.
+
+xi 0 ‚â§ T0, ‚àÄi
+
+(5)
+
+X
+
+‚Äì 32 ‚Äì
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+where Œ¶(Y) = [Œ¶(yi)]Ni=1, Œ¶(Y ) = [Œ¶(yi)]Pi=1 and Œ¶(D) = [Œ¶(di)]Ki=1.
+The dictionary in F can be represented by the linear combination of the input data (i.e., Œ¶(D) = Œ¶(Y)A), since all dictionary atoms lie in the linear span of the input data [12]. A ‚àà RN√óK is an atom representation dictionary and the optimal A is directly related to the best dictionary D that can be achieved. The formulation of kernel dictionary learning and kernel sparse coding can be re-written as equations (6) and (7) respectively:
+
+(XÀÜ , AÀÜ ) = arg min
+X,A
+
+Œ¶(Y) ‚àí Œ¶(Y)AX
+
+2 F
+
+s.t.
+
+xi
+
+0 ‚â§ T0, ‚àÄi
+
+(6)
+
+(XÀÜ ) = arg min Œ¶(Y ) ‚àí Œ¶(Y)AX
+
+2 F
+
+s.t.
+
+xi 0 ‚â§ T0, ‚àÄi
+
+(7)
+
+X
+
+A kernel extension of the K-SVD type dictionary learning algorithm [12] is adopted in our framework. Since learning of dictionary iteratively alternates between kernel sparse coding and kernel dictionary learning until predeÔ¨Åned criteria are met or maximum iteration number is reached, we only focus on the optimization of kernel dictionary learning (i.e., equation (6)) for simplicity.
+
+In the kernel sparse coding step, the atom representation dictionary A is assumed
+
+to be known and Ô¨Åxed. The sparse codes matrix X can be found by minimizing the
+
+approximation error
+
+Œ¶(Y) ‚àí Œ¶(Y)AX
+
+2 F
+
+subject to the sparsity constraint
+
+xi
+
+0‚â§
+
+T0, ‚àÄi. The penalty term can be decomposed and written as:
+
+N
+
+Œ¶(Y) ‚àí Œ¶(Y)AX
+
+2 F
+
+=
+
+‚àë
+
+Œ¶(yi) ‚àí Œ¶(Y)Axi
+
+2 2
+
+(8)
+
+i=1
+
+Now, the ‚Äúbig‚Äù problem is separated into N ‚Äúsmall‚Äù optimization problems:
+
+min
+xi
+
+Œ¶(yi) ‚àí Œ¶(Y)Axi
+
+2 2
+
+s.t.
+
+xi 0 ‚â§ T0
+
+(9)
+
+To facilitate optimization, the objective function is reconstructed with kernel function K to avoid the unknown nonlinear transformation Œ¶(¬∑):
+
+min
+xi
+
+K
+
+(yi, yi) ‚àí 2K(yi, Y)Axi
+
++ xTi AT K(Y,Y)Axi
+
+s.t.
+
+xi 0 ‚â§ T0
+
+(10)
+
+With the help of the kernel trick, this optimization problem can be solved by the classic orthogonal matching pursuit (OMP) algorithm [21].
+
+Once the sparse codes matrix is calculated, we update the all dictionary atoms ac-
+
+cording to the projection error. In other words, kernel dictionary learning, with the
+
+Ô¨Åxed X, searches for a new atom representation dictionary A to minimize Œ¶(Y) ‚àí
+
+Œ¶(Y)AX
+
+2 F
+
+.
+
+First, the penalty term is rewritten as:
+
+K
+
+‚àë ‚àë Œ¶(Y) ‚àí Œ¶(Y)
+
+a jxRj
+
+2 F
+
+=
+
+Œ¶(Y)(I ‚àí
+
+a jxRj ) ‚àí Œ¶(Y)(akxRk )
+
+2 F
+
+(11)
+
+j=1
+
+j=k
+
+‚Äì 33 ‚Äì
+
+X. Chen et al.
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+
+where ak and xRk correspond to the kth column of A and the kth row of X respectively. Contribution made by the kth dictionary atom to the estimated sample can be obtained from akxRk . For simplicity, we denote Ek = I ‚àí ‚àë j=k a jxRj , which represents the approximation error between the estimated and original samples when the kth dictionary atom is removed.
+
+As can be seen in equation (11), the pair of unknown variables (ak, xRk ) is expected to be found to minimize the approximation error. This can be solve by the best
+rank-1 approximation. Due to their trivial contribution to the optimization problem, columns related to zero entries of xRk in Ek and akxk are removed, which yields ERk e and akxRk e respectively (xRk e containing only non-zero weights of xRk ). Singular value decomposition (SVD) is applied to ERk e and akxRk e instead of Ek and akxRk to preserve the speciÔ¨Åed sparsity level and reduce computational cost.
+
+The SVD decomposes Œ¶(Y)ERk e into three parts:
+
+Œ¶(Y)ERk e = UŒ£VT
+
+(12)
+
+Equating Œ¶(Y)akxRk e to the rank-1 matrix, which corresponds to the largest singular value œÉ1 = Œ£(1, 1) of Œ¶(Y)ERk e, gives the solution to the best rank-1 approximation.
+
+Œ¶(Y)akxRk e = u1œÉ1vT1
+
+(13)
+
+where u1 and v1 are the Ô¨Årst columns of U and V corresponding to œÉ1 respectively. Thus, the solution can be calculated from the equations below:
+
+Œ¶(Y)ak = u1
+
+xRk e = œÉ1vT1
+
+(14)
+
+However, it is impractical to perform SVD on Œ¶(Y)ERk e since the explicit formulation of Œ¶(¬∑) is unknown. Consequently, the kernel trick should be used again such that the eigen decomposition of ERk eT Œ¶(Y)T Œ¶(Y)ERk e, which is V‚àÜVT , is calculated to infer the unknown variables. As a result, V is obtained and œÉ1 can be deduced by
+œÉ1 = ‚àÜ(1, 1). An analytical solution is possible when the term for œÉ1 is substi-
+tuted into equation (14):
+
+ak = œÉ1‚àí1ERk ev1
+
+(15)
+
+In each iteration, all the atoms of A are updated according to the manner stated above followed by the search for new sparse codes based on the new dictionary. This process alternates between kernel dictionary learning and kernel dictionary learning till some preset conditions are satisÔ¨Åed.
+
+5 Graph-Cuts
+The pixel-wise segmentation decision is made by the graph-cut method based on both kernel sparse representation and topological information of the brain structures. The task requires the proposed framework to classify pixels into Ô¨Åve speciÔ¨Åc
+
+‚Äì 34 ‚Äì
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+classes, which are non-tumor (label=0), necrotic core (label=1), edema (label=2), non-enhancing core (label=3) and enhancing core (label=4). For each class, a dictionary is learned by applying kernel dictionary learning to a set of training samples as described in Section 4. These dictionaries should be able to model their own classes well since they are optimized for the particular purpose, even though they fail to approximate well the rest of the classes.
+
+For a test superpixel st , the proposed framework computes Ô¨Åve sparse codes x0, x1, x2, x3
+and x4 with respect to the Ô¨Åve dictionaries. The approximation errors between the input sample st and the Ô¨Åve approximations are denoted by es0t , es1t , es2t , es3t and es4t , and measured by:
+
+esit = Œ¶(yst ) ‚àí Œ¶(Di)xsii 22, i = 0, 1, 2, 3, 4
+
+(16)
+
+Segmentation based on kernel sparse representation does not take topological information of the brain structure into consideration. The graph-cut method, which naturally incorporates topological information, is a possible remedy. We propose a variant graph-cuts [22, 23] to better adapt to our application. A graph should be constructed to proceed with the variant graph-cuts. To facilitate graph construction, a superpixel is Ô¨Årst ungrouped into a set of pixels which form the superpixel. Then these pixels are given the same approximation errors as the superpixel they belong. The image is represented by a array which contains all its pixels z = (z1, ..., zl..., zL), assuming there are L pixels in total. The approximation errors assigned to pixel zl are denoted by ezil (i = 0, 1, 2, 3, 4). These pixels, besides the approximation errors, contains extra information in terms of different gray-level intensities in multimodalities. For pixel zl, gray-level intensities in the four modalities are deÔ¨Åned as gzTl1, gzTl2, gzTl1c and gzFlLAIR.
+The energy function of graph-cuts is expressed by:
+
+E( f ) = ‚àë ‚àë Vp,q( fp, fq) + Dp( fp)
+
+(17)
+
+{ p,g}‚ààN
+
+p‚ààP
+
+where f is a label in a Ô¨Ånite label set L , {p, q} a pair of pixels in the pixel set P, and N a set of neighboring pixels. The Ô¨Årst term in equation (17) is known as the smoothness term, which encourages pairwise smoothness while preserving label discontinuity on boundaries. The data term is the name given to the second term, which measures the Ô¨Åt of label f to the observed data p.
+
+Typically, the data term is formulated with negative log-likelihood. According to the previous discussion, if a test sample belongs a speciÔ¨Åc class, the smallest approximation error can be achieve when the dictionary learned for this class is used in kernel sparse coding. Therefore, the kernel sparse representation generated in the previous step is utilized in the data term as the measurement of label appropriateness as shown below:
+
+L
+
+L
+
+‚àë ‚àë l=1 Dzl ( fzl ) = l=1 log(ezflzl )
+
+(18)
+
+‚Äì 35 ‚Äì
+
+X. Chen et al.
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+
+The smoothness term is deÔ¨Åned as:
+
+‚àë ‚àë Vzl,zq ( fzl , fzq ) = Œ∏
+
+[ fzl = fzq ] exp ‚àí Œ≤
+
+zl ‚àí zq
+
+2 2
+
+{zl ,zq}‚ààN
+
+{zl ,zq}‚ààN4
+
+(19)
+
+where Œ∏ is a constant controlling the degree of discontinuity preserving, N4 indicates 4-way connectivity and [¬∑] is a indicator function taking value 1 for true prediction or 0 for false prediction. Œ∏ is empirically set to 50 according to the preliminary experiments. The Euclidean distance between pixel zl and zq is given by:
+
+‚àë zl ‚àí zq
+
+2 2
+
+=
+
+(gzcl ‚àí gzcq )2, c ‚àà {T1, T2, T1c, FLAIR}
+
+(20)
+
+c
+
+Though Œ∏ only has the control on overall smoothness, we have another parameter Œ≤ to prevent the tendency of being over-smooth on boundaries between different classes. Œ≤ is computed by:
+
+Œ≤ = (2 < zl ‚àí zq 2 >)‚àí1
+
+(21)
+
+where < ¬∑ > denotes expectation over N4 neighborhood.
+The optimization of the variant graph-cuts, depending on nonlinear feature similarity and topological information, provides the best label conÔ¨Ågurations for all pixels. We use the GCMex - MATLAB wrapper to implement the proposed variant graphcuts [23, 24, 25].
+
+6 Experiment and Discussion
+The proposed framework is evaluated on 20 real HGG cases in the training set of BRATS2013 with two-fold cross validation (CV). In the training phase, the superpixels collected from the training set for each of the Ô¨Åve classes (i.e., non-tumor(0), necrotic core(1), edema(2), non-enhancing core(3) and enhancing-core(4)) are initialized for kernel dictionary learning by PCA-Split. The desired number of subsets Q is empirically set to 512 considering the trade-off between good segmentation result and less processing time. As a result, the dictionaries of the Ô¨Åve task-relevant classes are learned from their corresponding 512 PCA-Split centroids. For kernel dictionary learning and kernel sparse coding, we Ô¨Åx the number of dictionary atoms to 200 and the sparsity level to 5. The framework is implemented on MATLAB using a computer with Intel processor (i7-3930K, 3.20GHz) and 32GB of RAM.
+The following three regions are segmented and used for evaluation:
+‚Ä¢ Region 1: complete tumor (label 1+2+3+4)
+‚Ä¢ Region 2: tumor core (label 1+3+4)
+‚Ä¢ Region 3: enhancing core (label 4)
+The performance of the proposed framework is reported via the Dice similarity coefÔ¨Åcient, Jaccard index and sensitivity [3] on the aforementioned three regions.
+
+‚Äì 36 ‚Äì
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+Even though the BRATS2013 dataset has been pre-processed with skull-striping and co-registration, obvious intensity bias can still be observed. The intensity bias can signiÔ¨Åcantly worsen the segmentation accuracy since superpixel-level histograms are intensively used in our framework. This requires further pre-processing steps including bias Ô¨Åeld correction and intensity inhomogeneity correction. T2 and FLAIR are exempted from bias Ô¨Åeld correction due to the fact that the correction decreases their contrast. N4ITK [26] tool in Slicer3D is used for bias Ô¨Åeld correction, while intensity inhomogeneity is adjusted by a learning-based two-step standardization [27].
+The segmentation result output directly from graph-cuts can be noisy. Therefore, binary morphological processing and connected component analysis are applied as post-processing steps.
+
+T1c
+
+T1
+
+T2
+
+FLAIR
+
+Result
+
+Ground Truth
+
+Figure 3 Three segmentation examples of the proposed framework. First column to sixth column correspond to T1c images, T1 images, T2 images, FLAIR images, segmentation results and ground truths respectively. The Ô¨Årst row shows one slice of patient009, while the second row is a slice of patient015. The bottom
+row demonstrates the performance of the proposed framework on the worst case-patine012.
+
+Several segmentation examples generated by the proposed approach are shown in Figure 3. In addition, we report the averages and standard deviations of the Dice similarity coefÔ¨Åcient, Jaccard index and sensitivity that achieved by the proposed framework in Table 1. The performance of our previous method [16] is also concluded in Table 1. For Region 2 and Region 3, we report the performance twice, one including patient012 while the other excluding patient012, since the peculiarity of patient012 signiÔ¨Åcantly worsens the overall performance as can be seen from Table 1. The reason why both our frameworks fail to give good segmentation results for patient012 is probably because of the similar intensities shared by the non-enhancing core and the edeme in all four modalites. Moreover, the tumor of patient012 mainly consists of non-enhancing core and edema, which makes it extremely difÔ¨Åcult for our approaches to make good segmentation decision. Hence,
+
+‚Äì 37 ‚Äì
+
+X. Chen et al.
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+
+Table 1 Evaluation of performance on BRATS 2013 training cases (HGG)
+
+Region 1 Region 2 Region 2(*) Region 3 Region 3(*)
+
+Dice
+
+previous
+
+proposed
+
+mean std mean std
+
+81.1 9.3 81.1 9.6
+
+62.9 17.6 63.3 22.1
+
+65.3 14.2 66.5 17.1
+
+69.7 17.2 70.4 19.6
+
+71.9 14.4 73.4 14.8
+
+Jaccard
+
+previous
+
+proposed
+
+mean std mean std
+
+69.2 12.5 69.1 12.9
+
+48.0 17.3 49.5 21.0
+
+50.0 15.2 52.0 18.2
+
+55.6 17.8 57.1 19.6
+
+57.7 15.5 59.7 16.2
+
+Sensitivity
+
+previous
+
+proposed
+
+mean std mean std
+
+81.9 13.6 82.3 14.1
+
+69.3 22.4 71.1 25.2
+
+72.4 18.2 74.8 19.6
+
+70.1 22.5 71.2 24.5
+
+72.9 19.2 74.5 20.0
+
+* denotes the scores are calculated excluding the result of patient0012.
+
+the proposed framework easily mistakes the non-enhancing core for the edema and results in very low scores in both Region 2 and Region 3. The average processing time for one slice required by our previous framework and the proposed framework are 8 seconds and 30 seconds. The comparison between our previous framework and the proposed framework in terms of performance (Table 1) and processing time clearly reveals the advantages of the proposed framework over the previous one. The proposed framework, with exactly the same training and test set conÔ¨Åguration, achieves comparable scores in Region 1 and slightly outperforms the previous one in both Region 2 and Region 3. The proposed framework (8 seconds) requires less than one third of the average execution time for one slice of the previous method (30 seconds).
+We also show in Table 2 the performances of three state-of-the-art discriminative approaches [28, 29, 30] evaluated on the same dataset. Scores are directly extracted from their published papers. This table is for reference only due to the lack of their training and testing set conÔ¨Ågurations. Nevertheless, we can conclude that our proposed approaches achieves competitive performance compared to the state-of-theart approaches. In addition, better generalization ability of the proposed framework is observed when we compare the CV type used in our framework to those in their approaches (Table 3). This means, the proposed framework achieves comparable performance with much less training cases, but still perform well on more unseen images.
+Conclusions
+A novel automated framework for multi-label brain tumor segmentation is proposed in this paper. As an enhanced version of our previous framework in [16], the proposed framework has advantages in both performance and processing time. PCASplit initialization provides compact and representative training samples for kernel dictionary learning, which signiÔ¨Åcantly reduce training and processing time without scarifying good models for related classes. Kernel sparse representation based on kernel dictionary learning and kernel sparse coding is utilized in the graph-cut method together with the topological information of brain structure to arrive at a segmentation decision. The results show that the proposed framework gives a comparable performance while better generalization ability is observed when compared
+‚Äì 38 ‚Äì
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+to the state-of-the-art discriminative approaches.
+We plan to include topological information in the generation of sparse representation as an extra regularization term, instead of optimizing sparse representation and graph-cuts separately, such that jointly optimization can be achieved and hence better sparse representation and result are expected.
+
+‚Äì 39 ‚Äì
+
+X. Chen et al.
+
+Table 2 Performance of state-of-the-art methods
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+
+Region 1 Region 2 Region 3
+
+Approach 1 mean std 73.4 ‚Äî 60.8 ‚Äî 63.5 ‚Äî
+
+Dice Approach 2 mean std 79.0 17.0 60.0 26.0 53.0 25.0
+
+Jaccard Approach 3 Approach 1 Approach 2 Approach 3 mean std mean std mean std mean std 80.2 12.4 59.8 ‚Äî ‚Äî ‚Äî 68.4 15.3 69.1 22.0 48.5 ‚Äî ‚Äî ‚Äî 56.1 21.2 69.8 24.7 50.8 ‚Äî ‚Äî ‚Äî 57.8 23.2
+Table 3 CV Type used in the state-of-the-art approaches
+
+Approach 1 mean std 85.7 ‚Äî 67.8 ‚Äî 66.8 ‚Äî
+
+Sensitivity Approach 2 mean std
+‚Äî‚Äî ‚Äî‚Äî ‚Äî‚Äî
+
+Approach 3 mean std 85.9 12.6 71.9 26.2 68.0 27.0
+
+‚Äì 40 ‚Äì
+
+Approach 1 Approach 2 Approach 3 CV Type 20-fold Leave-one-out 5-fold Approach 1 is proposed by Buendia et al.[28], Approach 2 is proposed by Cordier et al.[29] and Approach 3 is proposed by Meier et al.[30]
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+References
+[1] Stefan Bauer, Roland Wiest, Lutz-P Nolte, and Mauricio Reyes. A survey of MRI-based medical image analysis for brain tumor studies. Physics in Medicine and Biology, 58(13):R97, 2013.
+[2] Nelly Gordillo, Eduard Montseny, and Pilar Sobrevilla. State of the art survey on MRI brain tumor segmentation. Magnetic Resonance Imaging, 31(8):1426‚Äì 1438, 2013.
+[3] Bjoern H Menze, Andras Jakab, Stefan Bauer, Jayashree Kalpathy-Cramer, Keyvan Farahani, Justin Kirby, Yuliya Burren, Nicole Porz, Johannes Slotboom, Roland Wiest, et al. The multimodal brain tumor image segmentation benchmark (BRATS). IEEE Transactions on Medical Imaging, 34(10):1993‚Äì 2024, 2015.
+[4] Marcel Prastawa, Elizabeth Bullitt, Sean Ho, and Guido Gerig. A brain tumor segmentation framework based on outlier detection. Medical Image Analysis, 8(3):275‚Äì283, 2004.
+[5] Bjoern H Menze, Koen Van Leemput, Danial Lashkari, Marc-Andre¬¥ Weber, Nicholas Ayache, and Polina Golland. A generative model for brain tumor segmentation in multi-modal images. In Proceedings of International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI 2010), pages 151‚Äì159. 2010.
+[6] Hassan Khotanlou, Olivier Colliot, Jamal Atif, and Isabelle Bloch. 3D brain tumor segmentation in MRI using fuzzy classiÔ¨Åcation, symmetry analysis and spatially constrained deformable models. Fuzzy Sets and Systems, 160(10):1457‚Äì1473, 2009.
+[7] Ali Gooya, Kilian M Pohl, Michel Bilello, Luigi Cirillo, George Biros, Elias R Melhem, and Christos Davatzikos. GLISTR: glioma image segmentation and registration. IEEE Transactions on Medical Imaging, 31(10):1941‚Äì1954, 2012.
+[8] Aaron E Lefohn, Joshua E Cates, and Ross T Whitaker. Interactive, GPUbased level sets for 3D segmentation. In Proceedings of International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI 2003), pages 564‚Äì572, 2003.
+[9] Sean Ho, Lizabeth Bullitt, and Guido Gerig. Level-set evolution with region competition: automatic 3-D segmentation of brain tumors. In Proceedings of IEEE International Conference on Pattern Recognition, volume 1, pages 532‚Äì535, 2002.
+[10] Ezequiel Geremia, Bjoern H Menze, Nicholas Ayache, et al. Spatial decision forests for glioma segmentation in multi-channel MR images. In the MICCAI Challenge on Multimodal Brain Tumor Image Segmentation (BRATS 2012), volume 34, pages 14‚Äì17, 2012.
+‚Äì 41 ‚Äì
+
+X. Chen et al.
+
+An Automated Framework for Multi-label Brain Tumor Segmentation based on Kernel Sparse Representation
+
+[11] S Reza and KM Iftekharuddin. Multi-class abnormal brain tissue segmentation using texture. In the MICCAI Challenge on Multimodal Brain Tumor Image Segmentation (BRATS 2013), pages 38‚Äì42, 2013.
+[12] Hien Nguyen, Vishal M Patel, Nasser M Nasrabadi, and Rama Chellappa. Kernel dictionary learning. In Proceedings of IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP 2012), pages 2021‚Äì2024, 2012.
+[13] Jinjun Wang, Jianchao Yang, Kai Yu, Fengjun Lv, Thomas Huang, and Yihong Gong. Locality-constrained linear coding for image classiÔ¨Åcation. In Proceedings of IEEE Conference on Computer Vision and Pattern Recognition (CVPR 2012), pages 3360‚Äì3367, 2010.
+[14] Jayaraman J Thiagarajan, Karthikeyan Natesan Ramamurthy, et al. Kernel sparse models for automated tumor segmentation. International Journal on ArtiÔ¨Åcial Intelligence Tools, 23(3), 2014.
+[15] Jeon Lee, Seung-Jun Kim, Rong Chen, and Edward H Herskovits. Brain tumor image segmentation using kernel dictionary learning. In Proceedings of IEEE International Conference on Engineering in Medicine and Biology Society (EMBC 2015), pages 658‚Äì661. IEEE, 2015.
+[16] Xuan Chen, Binh P. Nguyen, Chee-Kong Chui, and Sim-Heng Ong. Automated brain tumor segmentation using kernel dictionary learning and superpixel-level features. In Proceedings IEEE International Conference on Systems, Man, and Cybernetics (SMC 2016), page [to appear], Budapest, Hungary, 9‚Äì12 Oct 2016. IEEE.
+[17] Jens Schneider and Ru¬®diger Westermann. Compression domain volume rendering. In Proceedings of IEEE International Conference on Visualization (VIS 2003), pages 293‚Äì300, 2003.
+[18] Mark Pauly, Markus Gross, and Leif P Kobbelt. EfÔ¨Åcient simpliÔ¨Åcation of point-sampled surfaces. In Proceedings of IEEE International Conference on Visualization (VIS 2002), pages 163‚Äì170, 2002.
+[19] Christian Conrad, Matthias Mertz, and Rudolf Mester. Contour-relaxed superpixels. In International Workshop on Energy Minimization Methods in Computer Vision and Pattern Recognition, volume 8081, pages 280‚Äì293, 2013.
+[20] Nello Cristianini and John Shawe-Taylor. An introduction to support vector machines and other kernel-based learning methods. Cambridge University Press, 2000.
+[21] Yagyensh Chandra Pati, Ramin Rezaiifar, and PS Krishnaprasad. Orthogonal matching pursuit: Recursive function approximation with applications to wavelet decomposition. In Proceedings of The Twenty-Seventh Asilomar Conference on Signals, Systems and Computers, pages 40‚Äì44, 1993.
+
+‚Äì 42 ‚Äì
+
+Acta Polytechnica Hungarica
+
+Vol. 14, No. 1, 2017
+
+[22] Carsten Rother, Vladimir Kolmogorov, and Andrew Blake. Grabcut: Interactive foreground extraction using iterated graph cuts. In ACM Transactions on Graphics (TOG), volume 23, pages 309‚Äì314, 2004.
+[23] Yuri Boykov, Olga Veksler, and Ramin Zabih. Fast approximate energy minimization via graph cuts. IEEE Transactions on Pattern Analysis and Machine Intelligence, 23(11):1222‚Äì1239, 2001.
+[24] Vladimir Kolmogorov and Ramin Zabih. What energy functions can be minimized via graph cuts? IEEE Transactions on Pattern Analysis and Machine Intelligence, 26(2):147‚Äì159, 2004.
+[25] Yuri Boykov and Vladimir Kolmogorov. An experimental comparison of mincut/max-Ô¨Çow algorithms for energy minimization in vision. IEEE Transactions on Pattern Analysis and Machine Intelligence, 26(9):1124‚Äì1137, 2004.
+[26] Nicholas J Tustison, Brian B Avants, et al. N4ITK: improved N3 bias correction. IEEE Transactions on Medical Imaging, 29(6):1310‚Äì1320, 2010.
+[27] La¬¥szlo¬¥ G Nyu¬¥l, Jayaram K Udupa, and Xuan Zhang. New variants of a method of MRI scale standardization. IEEE Transactions on Medical Imaging, 19(2):143‚Äì150, 2000.
+[28] Patricia Buendia, Thomas Taylor, Michael Ryan, and Nigel John. A grouping artiÔ¨Åcial immune network for segmentation of tumor images. In the MICCAI Challenge on Multimodal Brain Tumor Image Segmentation (BRATS 2013), pages 1‚Äì5, 2013.
+[29] Nicolas Cordier, Bjoern Menze, Herve¬¥ Delingette, and Nicholas Ayache. Patch-based segmentation of brain tissues. In the MICCAI Challenge on Multimodal Brain Tumor Image Segmentation (BRATS 2013), pages 6‚Äì17, 2013.
+[30] Raphael Meier, Stefan Bauer, Johannes Slotboom, Roland Wiest, and Mauricio Reyes. A hybrid model for multimodal brain tumor segmentation. In the MICCAI Challenge on Multimodal Brain Tumor Image Segmentation (BRATS 2013), pages 31‚Äì37, 2013.
+
+View publication stats
+
+‚Äì 43 ‚Äì
+
